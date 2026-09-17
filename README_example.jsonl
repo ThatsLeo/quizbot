@@ -1,0 +1,46 @@
+COMMENTO:
+    Questa è la struttura base di ogni entry nel file db, indentata correttamente per le annidazioni.
+    Il db è un JSONL, ovvero ogni riga è un file JSON a sè.
+    I campi null sono inseriti di default, le funzioni di download scaricano e poi inseriscono 
+    nella entry corretta il path del file.
+{
+    "entry": {
+        "anilist_id": 154587,
+        "mal_id": 52991,
+        "nameEN": "Frieren: Beyond Journey’s End",
+        "nameJP": "Sousou no Frieren",
+        "coverImg": {
+            "extraLarge": "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/bx154587-qQTzQnEJJ3oB.jpg",
+            "large": "https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx154587-qQTzQnEJJ3oB.jpg",
+            "color": "#bbf1a1"
+        },
+        "openings": {
+            "Opening 1": {
+                "song": "Yuusha",
+                "difficulty": 76.0,
+                "video": "ypdy3a.webm",
+                "video_path": null,
+                "audio": "acloki.mp3",
+                "audio_path": null
+            },
+            "Opening 2": {
+                "song": "Haru",
+                "difficulty": 70.0,
+                "video": "jkbc3w.webm",
+                "video_path": null,
+                "audio": "nwb51k.mp3",
+                "audio_path": null
+            }
+        },
+        "Endings": {
+            "Ending 1": {
+                "song": "Anytime Anywhere",
+                "difficulty": 66.0,
+                "video": "8dlrnd.webm",
+                "video_path": null,
+                "audio": "jl4nif.mp3",
+                "audio_path": null
+            }
+        }
+    }
+}
