@@ -223,8 +223,8 @@ def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
                         if target == opening:
                             if OP[opening]["video_path"] == None:
                                 
-                                new_path = f"{dest_path}/{entry["mal_id"]}/{OP[opening]["song"]}.mp4"
-                                download_file(f"{DOWNLOAD_URL}/{OP[opening]["video"]}", new_path)
+                                new_path = f"{dest_path}/{entry['mal_id']}/{OP[opening]['song']}.mp4"
+                                download_file(f"{DOWNLOAD_URL}/{OP[opening]['video']}", new_path)
                                 paths.append(new_path)
 
                                 if disc_persistant : OP[opening]["video_path"] = new_path; modified = True
@@ -232,8 +232,8 @@ def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
                                 
                             if OP[opening]["audio_path"] == None:
 
-                                new_path = f"{dest_path}/{entry["mal_id"]}/{OP[opening]["song"]}.mp3"
-                                download_file(f"{DOWNLOAD_URL}/{OP[opening]["audio"]}", new_path)
+                                new_path = f"{dest_path}/{entry['mal_id']}/{OP[opening]['song']}.mp3"
+                                download_file(f"{DOWNLOAD_URL}/{OP[opening]['audio']}", new_path)
                                 paths.append(new_path)
 
                                 if disc_persistant : OP[opening]["audio_path"] = new_path; modified = True
@@ -245,8 +245,8 @@ def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
                         if target == ending:
                             if ED[ending]["video_path"] == None:
 
-                                new_path = f"{dest_path}/{entry["mal_id"]}/{ED[ending]["song"]}.mp4"
-                                download_file(f"{DOWNLOAD_URL}/{ED[ending]["video"]}", new_path)
+                                new_path = f"{dest_path}/{entry['mal_id']}/{ED[ending]['song']}.mp4"
+                                download_file(f"{DOWNLOAD_URL}/{ED[ending]['video']}", new_path)
                                 paths.append(new_path)
 
                                 if disc_persistant: ED[ending]["video_path"] = new_path; modified = True
@@ -255,8 +255,8 @@ def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
 
                             if ED[ending]["audio_path"] == None:
 
-                                new_path = f"{dest_path}/{entry["mal_id"]}/{ED[ending]["song"]}.mp3"
-                                download_file(f"{DOWNLOAD_URL}/{ED[ending]["audio"]}", new_path)
+                                new_path = f"{dest_path}/{entry['mal_id']}/{ED[ending]['song']}.mp3"
+                                download_file(f"{DOWNLOAD_URL}/{ED[ending]['audio']}", new_path)
                                 paths.append(new_path)
 
                                 if disc_persistant : ED[ending]["audio_path"] = new_path; modified = True
@@ -281,6 +281,59 @@ def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
             f.writelines(righe)
 
     return sorted_by_index, paths, disc_persistant
+
+
+def check_media_path2(db_path, dest_path, choices_list:dict, disc_persistant = False):
+
+    choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
+    mods = {}
+    paths = []
+
+    with open(db_path, "r", encoding="utf-8") as f:
+
+        for index, line in enumerate(f):
+            if index in choices_list:
+
+                target = choices_list[index]
+
+                complete_entry = json.loads(line)
+                entry = complete_entry["entry"]
+                
+                modified = False
+                
+                if "Opening" in target: SONG = entry["Openings"][target]
+                elif "Ending" in target: SONG = entry["Endings"][target]
+
+                if SONG["video_path"] == None:
+                                                
+                    new_path = f"{dest_path}/{entry['mal_id']}/{SONG['song']}.mp4"
+                    download_file(f"{DOWNLOAD_URL}/{SONG['video']}", new_path)
+                    paths.append(new_path)
+
+                    if disc_persistant : SONG["video_path"] = new_path; modified = True
+
+                if SONG["audio_path"] == None:
+                
+                    new_path = f"{dest_path}/{entry['mal_id']}/{SONG['song']}.mp3"
+                    download_file(f"{DOWNLOAD_URL}/{SONG['audio']}", new_path)
+                    paths.append(new_path)
+
+                    if disc_persistant : SONG["audio_path"] = new_path; modified = True
+
+                if disc_persistant and modified:
+                    mods[index] = complete_entry
+
+    if mods:
+        with open(db_path, "r", encoding="utf-8") as f:
+            righe = f.readlines()
+        
+        for idx, updates in mods.items():
+            righe[idx] = json.dumps(updates, ensure_ascii=False) + "\n"
+        
+        with open(db_path, "w", encoding="utf-8") as f:
+            f.writelines(righe)
+
+    return choices_list, paths, disc_persistant
 
 
 #il parametro forced forza la riscrittura del file nonostante sia già presente.
@@ -352,11 +405,35 @@ def random_pick(db_path, diff_range, n_extractions, only_OP = True):
     if n_extractions > len(help_list) : n_extractions = len(help_list)
     choices = random.choices(help_list, k=n_extractions)
     return choices
-    
 
+# difficoltà corrisponde a quella nel db
+def random_pick2(db_path, diff_range, n_extractions, only_OP = True):
 
-#popolate(1,20,"db.jsonl",0.7)
-choices = random_pick("db.jsonl",[0,40], 6)
-sorted, paths, persistant = check_media_path("db.jsonl","downloads",choices)
-for song in extract_sample_list(paths):
-    print(song)
+    all_choices = dict()
+
+    with open(db_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            entry = json.loads(line)['entry']
+
+            SONGS = entry["Openings"]
+            if not only_OP: SONGS = SONGS | entry["Endings"] # faccio un merge con le ending
+            for song_number, opening in SONGS.items():
+
+                diff = opening["difficulty"]
+
+                if diff and diff <= diff_range[1] and diff >= diff_range[0]:
+
+                    all_choices[i] = song_number
+    f.close()
+
+    if n_extractions > len(all_choices) : n_extractions = len(all_choices)
+    choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
+    return choices
+
+if __name__== '__main__':
+
+    #popolate(1,20,"db.jsonl",0.7)
+    choices = random_pick2("db.jsonl",[60,100], 5)
+    sorted, paths, persistant = check_media_path2("db.jsonl","downloads",choices)
+    for song in extract_sample_list(paths):
+        print(song)
