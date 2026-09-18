@@ -2,6 +2,9 @@ import requests
 from requests.exceptions import HTTPError
 import time
 import json
+import random
+from pathlib import Path
+
 
 
 ANI_URL = "https://graphql.anilist.co"
@@ -186,26 +189,112 @@ def popolate(page_start, page_end, path, sleep=None):
 
 
 #scarica dal dominio secondo il codice riportato nel database.
-#LA DEVO FINIRE
-def check_media_path(code):
-    with open("db.jsonl", "r", encoding="utf-8") as f:
+#db_path autoesplicativo
+#dest_path è da dichiarare in questo modo es: "downloads"
+#choice_list è una lista di dizionari ricavata dalla funzione random_pick strutturata in questo modo:
+#[{134 : 'Opening 1'}, ...] in cui la prima chiave è l'indice di riga nel DB, il valore è il target selezionato. 
+#disc_persistant dichiara se aggiornare il DB con i path, la gestione dell'eliminazione si dovrà ottenere
+#passando questa variabile più avanti nella pipeline.
+def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
 
-        for index in range():
-            riga = f[index].strip()
-            if riga:
-                entry = json.loads(riga)
-                print(entry)
+    sorted_by_index = sorted(choices_list, key=lambda entry: next(iter(entry)))
+    print(sorted_by_index)
+
+    mods = {}
+
+    with open(db_path, "r", encoding="utf-8") as f:
+
+        cur = 0
+        key = (list(sorted_by_index[cur].keys()))[0]
+        for index, line in enumerate(f):
+            if (index == key):
+
+                target = sorted_by_index[cur][key]
+
+                complete_entry = json.loads(line)
+                entry = complete_entry["entry"]
+
+                modified = False
+
+                if "Opening" in target:
+
+                    OP = entry["openings"]
+                    for opening in OP:
+                        if target == opening:
+                            if OP[opening]["video_path"] == None:
+                                
+                                    new_path = f"{dest_path}/{entry["mal_id"]}/{OP[opening]["song"]}.mp4"
+                                    download_file(f"{DOWNLOAD_URL}/{OP[opening]["video"]}", new_path)
+
+                                    if disc_persistant : OP[opening]["video_path"] = new_path; modified = True
+
+                                
+                            if OP[opening]["audio_path"] == None:
+
+                                new_path = f"{dest_path}/{entry["mal_id"]}/{OP[opening]["song"]}.mp3"
+                                download_file(f"{DOWNLOAD_URL}/{OP[opening]["audio"]}", new_path)
+
+                                if disc_persistant : OP[opening]["audio_path"] = new_path; modified = True
 
 
+                elif "Ending" in target:
+                    ED = entry["Endings"]
+                    for ending in ED:
+                        if target == ending:
+                            if ED[ending]["video_path"] == None:
+
+                                new_path = f"{dest_path}/{entry["mal_id"]}/{ED[ending]["song"]}_video.mp4"
+                                download_file(f"{DOWNLOAD_URL}/{ED[ending]["video"]}", new_path)
+
+                                if disc_persistant: ED[ending]["video_path"] = new_path; modified = True
+                                
 
 
-def scarica_file(url, percorso_destinazione):
+                            if ED[ending]["audio_path"] == None:
+
+                                new_path = f"{dest_path}/{entry["mal_id"]}/{ED[ending]["song"]}_audio.mp3"
+                                download_file(f"{DOWNLOAD_URL}/{ED[ending]["audio"]}", new_path)
+
+                                if disc_persistant : ED[ending]["audio_path"] = new_path; modified = True
+
+            if disc_persistant and modified:
+                mods[index] = complete_entry
+
+
+                cur += 1
+                if cur >= len(sorted_by_index):
+                    break
+                key = (list(sorted_by_index[cur].keys()))[0]
+
+    if mods:
+        with open(db_path, "r", encoding="utf-8") as f:
+            righe = f.readlines()
+        
+        for idx, updates in mods.items():
+            righe[idx] = json.dumps(updates, ensure_ascii=False) + "\n"
+        
+        with open(db_path, "w", encoding="utf-8") as f:
+            f.writelines(righe)
+
+    return sorted_by_index, disc_persistant
+
+
+#il parametro forced forza la riscrittura del file nonostante sia già presente.
+def download_file(url, percorso_destinazione, forced = False):
     if not url:
         return False
+    
+    output_file = Path(percorso_destinazione)
+
+    if output_file.exists() and not forced:
+        return True
+    
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    
     try:
         response = requests.get(url, stream=True)
         response.raise_for_status()
-        with open(percorso_destinazione, "wb") as f:
+        with open(output_file, "wb") as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         return True
@@ -214,6 +303,53 @@ def scarica_file(url, percorso_destinazione):
         return False
                 
 
+#diff range deve essere una lista con due valori
+#n_extractions è il numero di canzoni che si vogliono estrarre
+def random_pick(db_path, diff_range, n_extractions, only_OP = True):
 
-#popolate(1, 2, "db.jsonl", 2)
-check_media_path(1)
+    #converte la difficoltà nel formato del DB anisong
+    help_diff = (
+        100-diff_range[1],
+        100-diff_range[0]
+    )
+
+    help_list = []
+
+    with open(db_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            entry = json.loads(line)
+            entry = entry["entry"]
+
+
+            OP = entry["openings"]
+            for key, opening in OP.items():
+
+                diff = opening["difficulty"]
+
+                if diff and diff <= help_diff[1] and diff >= help_diff[0]:
+
+                    info = { i : key }
+
+                    help_list.append(info)
+
+            if not only_OP:
+                ED = entry["Endings"]
+                for key, ending in ED.items():
+
+                    diff = ending["difficulty"]
+
+                    if diff and diff <= help_diff[1] and diff >= help_diff[0]:
+                        info = { i : key }
+                        
+                        help_list.append(info)
+    f.close()
+
+    if n_extractions > len(help_list) : n_extractions = len(help_list)
+    choices = random.choices(help_list, k=n_extractions)
+    return choices
+    
+
+
+#popolate(3,10,"db.jsonl",1)
+choices = random_pick("db.jsonl",[0,10], 3)
+check_media_path("db.jsonl","downloads",choices)
