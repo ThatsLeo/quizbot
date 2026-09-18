@@ -356,7 +356,7 @@ def random_pick(db_path, diff_range, n_extractions, only_OP = True):
 
 
 #popolate(1,20,"db.jsonl",0.7)
-#choices = random_pick("db.jsonl",[0,30], 1)
-#sorted, paths, persistant = check_media_path("db.jsonl","downloads",choices)
-for song in extract_sample_list(['downloads/50380/Chiki Chiki Bang Bang.mp4', 'downloads/50380/Chiki Chiki Bang Bang.mp3']):
+choices = random_pick("db.jsonl",[0,40], 6)
+sorted, paths, persistant = check_media_path("db.jsonl","downloads",choices)
+for song in extract_sample_list(paths):
     print(song)

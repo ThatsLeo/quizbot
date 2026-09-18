@@ -19,86 +19,65 @@ def normalize(arr):
     return (arr - min_v) / (max_v - min_v)
 
 
-
-def sampling_pipeline(track_path, hop_length=1024, w_rms=0.45, w_onset=0.45, w_centroid=0.10, min_repetition=0.15):
+def sampling_pipeline(track_path, hop_length=1024, window_sec=15,
+                              w_centroid=0.5, w_rms=0.5, min_repetition=0.15):
 
     y, sr = librosa.load(track_path, mono=True)
-
     duration_sec = len(y) / sr
 
-    min_lag_sec = max(duration_sec * 0.15, 20)
-    max_lag_sec = min(duration_sec * 0.5, 150)
-
-    min_lag_frames = librosa.time_to_frames(min_lag_sec, sr=sr, hop_length=hop_length)
-    max_lag_frames = librosa.time_to_frames(max_lag_sec, sr=sr, hop_length=hop_length)
+    window_frames = librosa.time_to_frames(window_sec, sr=sr, hop_length=hop_length)
 
     chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop_length)
     chroma_smooth = librosa.decompose.nn_filter(chroma, aggregate=np.median, metric='cosine')
+    S = librosa.segment.recurrence_matrix(chroma_smooth, mode='affinity', sym=True, k=None)
 
-    S = librosa.segment.recurrence_matrix(
-        chroma_smooth,
-        mode='affinity',
-        sym=True,
-        k=None
-    )
-
-    window_frames = librosa.time_to_frames(15, sr=sr, hop_length=hop_length)
-
-    # I tre segnali validati empiricamente: RMS ed spectral centroid premiano
-    # la finestra, onset strength la penalizza (il ritornello, nei brani
-    # testati, ha sempre densita' ritmica piu' bassa del resto del brano).
     rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
-    onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop_length)
     centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop_length)[0]
 
-    rms_window_sums = np.convolve(rms, np.ones(window_frames), mode='valid') / window_frames
-    onset_window_sums = np.convolve(onset_env, np.ones(window_frames), mode='valid') / window_frames
-    centroid_window_sums = np.convolve(centroid, np.ones(window_frames), mode='valid') / window_frames
+    rms_win = np.convolve(rms, np.ones(window_frames), mode='valid') / window_frames
+    centroid_win = np.convolve(centroid, np.ones(window_frames), mode='valid') / window_frames
 
-    rms_norm = normalize(rms_window_sums)
-    onset_norm = normalize(onset_window_sums)
-    centroid_norm = normalize(centroid_window_sums)
+    rms_norm = normalize(rms_win)
+    centroid_norm = normalize(centroid_win)
+    base_score = w_rms * rms_norm + w_centroid * centroid_norm
 
-    base_score = w_rms * rms_norm - w_onset * onset_norm + w_centroid * centroid_norm
+    # Range di lag breve 
+    min_lag_sec = max(duration_sec * 0.15, 15)
+    max_lag_sec = min(duration_sec * 0.5, 60)
+    min_lag_frames = librosa.time_to_frames(min_lag_sec, sr=sr, hop_length=hop_length)
+    max_lag_frames = librosa.time_to_frames(max_lag_sec, sr=sr, hop_length=hop_length)
 
-    best_score = -np.inf
-    best_start = None
+    best_repeated_score = -np.inf
+    best_repeated_start = None
 
     for d in range(min_lag_frames, max_lag_frames):
         diag = np.diagonal(S, offset=d)
         if len(diag) < window_frames:
             continue
+        sim_win = np.convolve(diag, np.ones(window_frames), mode='valid') / window_frames
 
-        sim_window_sums = np.convolve(diag, np.ones(window_frames), mode='valid')
-        sim_norm = sim_window_sums / window_frames
-
-        n = len(sim_norm)
-        aligned_base = base_score[:n]
-
-        # Filtro di ripetizione: consideriamo solo le posizioni dove esiste
-        # davvero una ripetizione su questa diagonale, cosi' non scegliamo mai
-        # una sezione isolata (es. intro) solo perche' ha RMS/onset favorevoli.
-        eligible = sim_norm >= min_repetition
+        n = len(sim_win)
+        eligible = sim_win >= min_repetition
         if not eligible.any():
             continue
 
-        candidate_scores = np.where(eligible, aligned_base, -np.inf)
+        candidate = np.where(eligible, base_score[:n], -np.inf)
+        idx = np.argmax(candidate)
+        if candidate[idx] > best_repeated_score:
+            best_repeated_score = candidate[idx]
+            best_repeated_start = idx
 
-        local_best_idx = np.argmax(candidate_scores)
-        local_best_score = candidate_scores[local_best_idx]
 
-        if local_best_score > best_score:
-            best_score = local_best_score
-            best_start = local_best_idx
+    best_unconstrained_start = int(np.argmax(base_score))
+    best_unconstrained_score = base_score[best_unconstrained_start]
 
-    if best_start is None:
-        # Nessuna diagonale ha superato la soglia di ripetizione in nessun
-        # punto (brano senza vere ripetizioni strutturali): fallback sul
-        # miglior punteggio RMS/onset/centroid puro, senza vincolo di ripetizione.
-        best_start = int(np.argmax(base_score))
+    if best_repeated_start is not None and best_repeated_score >= best_unconstrained_score * 0.9:
+        best_start = best_repeated_start
+    else:
+        best_start = best_unconstrained_start
 
-    best_start_sec = librosa.frames_to_time(best_start, sr=sr, hop_length=hop_length)
-    return best_start_sec-1
+    return librosa.frames_to_time(best_start, sr=sr, hop_length=hop_length)
+
 
 def cut_audio(input_path, start_sec, output_path, duration=15):
     subprocess.run([
