@@ -189,101 +189,8 @@ def popolate(page_start, page_end, path, sleep=None):
 
 
 
-#scarica dal dominio secondo il codice riportato nel database.
-#db_path autoesplicativo
-#dest_path è da dichiarare in questo modo es: "downloads"
-#choice_list è una lista di dizionari ricavata dalla funzione random_pick strutturata in questo modo:
-#[{134 : 'Opening 1'}, ...] in cui la prima chiave è l'indice di riga nel DB, il valore è il target selezionato. 
-#disc_persistant dichiara se aggiornare il DB con i path, la gestione dell'eliminazione si dovrà ottenere
-#passando questa variabile più avanti nella pipeline.
-def check_media_path(db_path, dest_path, choices_list, disc_persistant = False):
 
-    sorted_by_index = sorted(choices_list, key=lambda entry: next(iter(entry)))
-    mods = {}
-    paths = []
-
-    with open(db_path, "r", encoding="utf-8") as f:
-
-        cur = 0
-        key = (list(sorted_by_index[cur].keys()))[0]
-        for index, line in enumerate(f):
-            if (index == key):
-
-                target = sorted_by_index[cur][key]
-
-                complete_entry = json.loads(line)
-                entry = complete_entry["entry"]
-
-                modified = False
-
-                if "Opening" in target:
-
-                    OP = entry["Openings"]
-                    for opening in OP:
-                        if target == opening:
-                            if OP[opening]["video_path"] == None:
-                                
-                                new_path = f"{dest_path}/{entry['mal_id']}/{OP[opening]['song']}.mp4"
-                                download_file(f"{DOWNLOAD_URL}/{OP[opening]['video']}", new_path)
-                                paths.append(new_path)
-
-                                if disc_persistant : OP[opening]["video_path"] = new_path; modified = True
-
-                                
-                            if OP[opening]["audio_path"] == None:
-
-                                new_path = f"{dest_path}/{entry['mal_id']}/{OP[opening]['song']}.mp3"
-                                download_file(f"{DOWNLOAD_URL}/{OP[opening]['audio']}", new_path)
-                                paths.append(new_path)
-
-                                if disc_persistant : OP[opening]["audio_path"] = new_path; modified = True
-
-
-                elif "Ending" in target:
-                    ED = entry["Endings"]
-                    for ending in ED:
-                        if target == ending:
-                            if ED[ending]["video_path"] == None:
-
-                                new_path = f"{dest_path}/{entry['mal_id']}/{ED[ending]['song']}.mp4"
-                                download_file(f"{DOWNLOAD_URL}/{ED[ending]['video']}", new_path)
-                                paths.append(new_path)
-
-                                if disc_persistant: ED[ending]["video_path"] = new_path; modified = True
-                                
-
-
-                            if ED[ending]["audio_path"] == None:
-
-                                new_path = f"{dest_path}/{entry['mal_id']}/{ED[ending]['song']}.mp3"
-                                download_file(f"{DOWNLOAD_URL}/{ED[ending]['audio']}", new_path)
-                                paths.append(new_path)
-
-                                if disc_persistant : ED[ending]["audio_path"] = new_path; modified = True
-
-                if disc_persistant and modified:
-                    mods[index] = complete_entry
-
-
-                cur += 1
-                if cur >= len(sorted_by_index):
-                    break
-                key = (list(sorted_by_index[cur].keys()))[0]
-
-    if mods:
-        with open(db_path, "r", encoding="utf-8") as f:
-            righe = f.readlines()
-        
-        for idx, updates in mods.items():
-            righe[idx] = json.dumps(updates, ensure_ascii=False) + "\n"
-        
-        with open(db_path, "w", encoding="utf-8") as f:
-            f.writelines(righe)
-
-    return sorted_by_index, paths, disc_persistant
-
-
-def check_media_path2(db_path, dest_path, choices_list:dict, disc_persistant = False):
+def download_media_list(db_path, dest_path, choices_list:dict, disc_persistant = False):
 
     choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
     mods = {}
@@ -294,7 +201,7 @@ def check_media_path2(db_path, dest_path, choices_list:dict, disc_persistant = F
         for index, line in enumerate(f):
             if index in choices_list:
 
-                target = choices_list[index]
+                target = choices_list[index]['type']
 
                 complete_entry = json.loads(line)
                 entry = complete_entry["entry"]
@@ -317,6 +224,7 @@ def check_media_path2(db_path, dest_path, choices_list:dict, disc_persistant = F
                     new_path = f"{dest_path}/{entry['mal_id']}/{SONG['song']}.mp3"
                     download_file(f"{DOWNLOAD_URL}/{SONG['audio']}", new_path)
                     paths.append(new_path)
+                    choices_list[index]['media_path'] = f"{dest_path}/{entry['mal_id']}"
 
                     if disc_persistant : SONG["audio_path"] = new_path; modified = True
 
@@ -359,55 +267,9 @@ def download_file(url, percorso_destinazione, forced = False):
     except Exception as err:
         print(f"Errore scaricando {url}: {err}")
         return False
-                
-
-#diff range deve essere una lista con due valori
-#n_extractions è il numero di canzoni che si vogliono estrarre
-def random_pick(db_path, diff_range, n_extractions, only_OP = True):
-
-    #converte la difficoltà nel formato del DB anisong
-    help_diff = (
-        100-diff_range[1],
-        100-diff_range[0]
-    )
-
-    help_list = []
-
-    with open(db_path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            entry = json.loads(line)
-            entry = entry["entry"]
-
-
-            OP = entry["Openings"]
-            for key, opening in OP.items():
-
-                diff = opening["difficulty"]
-
-                if diff and diff <= help_diff[1] and diff >= help_diff[0]:
-
-                    info = { i : key }
-
-                    help_list.append(info)
-
-            if not only_OP:
-                ED = entry["Endings"]
-                for key, ending in ED.items():
-
-                    diff = ending["difficulty"]
-
-                    if diff and diff <= help_diff[1] and diff >= help_diff[0]:
-                        info = { i : key }
-                        
-                        help_list.append(info)
-    f.close()
-
-    if n_extractions > len(help_list) : n_extractions = len(help_list)
-    choices = random.choices(help_list, k=n_extractions)
-    return choices
 
 # difficoltà corrisponde a quella nel db
-def random_pick2(db_path, diff_range, n_extractions, only_OP = True):
+def random_pick(db_path, diff_range, n_extractions, only_OP = True):
 
     all_choices = dict()
 
@@ -417,23 +279,44 @@ def random_pick2(db_path, diff_range, n_extractions, only_OP = True):
 
             SONGS = entry["Openings"]
             if not only_OP: SONGS = SONGS | entry["Endings"] # faccio un merge con le ending
-            for song_number, opening in SONGS.items():
+            for song_type, opening in SONGS.items():
 
                 diff = opening["difficulty"]
 
                 if diff and diff <= diff_range[1] and diff >= diff_range[0]:
 
-                    all_choices[i] = song_number
+                    all_choices[i] = {'type' : song_type, 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
     f.close()
 
     if n_extractions > len(all_choices) : n_extractions = len(all_choices)
     choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
     return choices
 
-if __name__== '__main__':
+def is_in(a:str, b:str):
 
-    #popolate(1,20,"db.jsonl",0.7)
-    choices = random_pick2("db.jsonl",[60,100], 5)
-    sorted, paths, persistant = check_media_path2("db.jsonl","downloads",choices)
+    if not a or not b:
+        return False
+    if a.lower() in b.lower():
+        return True
+    return False
+
+def search_by_name(query: str):
+    query = query.lower()
+    res = []
+
+    with open("db.jsonl", "r", encoding="utf-8") as f:
+        for line in f:
+            entry = json.loads(line)["entry"]
+
+            nameEN = entry["nameEN"]
+            nameJP = entry["nameJP"]
+
+            if is_in(query,nameEN) or is_in(query, nameJP):
+                res.append(entry) 
+    return res
+
+if __name__== '__main__':
+    choices = random_pick("db.jsonl",[60,100], 5)
+    sorted, paths, persistant = download_media_list("db.jsonl","downloads",choices)
     for song in extract_sample_list(paths):
         print(song)

@@ -4,6 +4,7 @@ from os import listdir
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, filters
 from uuid import uuid4
+from scraper import search_by_name
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -57,28 +58,7 @@ async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-def is_in(a:str, b:str):
 
-    if not a or not b:
-        return False
-    if a.lower() in b.lower():
-        return True
-    return False
-
-def search_by_name(query: str):
-    query = query.lower()
-    res = []
-
-    with open("db.jsonl", "r", encoding="utf-8") as f:
-        for line in f:
-            entry = json.loads(line)["entry"]
-
-            nameEN = entry["nameEN"]
-            nameJP = entry["nameJP"]
-
-            if is_in(query,nameEN) or is_in(query, nameJP):
-                res.append(entry) 
-    return res
 
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
