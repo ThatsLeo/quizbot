@@ -246,8 +246,9 @@ class DB:
                 diff = opening["difficulty"]
 
                 if diff and diff <= diff_range[1] and diff >= diff_range[0]:
-
-                    all_choices[i] = {'type' : song_type, 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
+                    if i in all_choices: all_choices[i]['type'].append(song_type)
+                    else:
+                        all_choices[i] = {'type' : [song_type], 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
 
         if n_extractions > len(all_choices) : n_extractions = len(all_choices)
         choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
@@ -258,39 +259,34 @@ class DB:
 
 class Downloader:
 
-    def __init__(self, dl_url, dest_path):
+    def __init__(self):
 
         self._download_locks = {}
         self._registry_lock = threading.Lock()
-        self.DOWNLOAD_URL = dl_url
-        self.dest_path = dest_path
+        self.DOWNLOAD_URL = DOWNLOAD_URL
+        self.dest_path = 'downloads'
 
     #La funzione ora si aspetta una copia completa in RAM del DB.
     def download_media_list(self, db_load, choices_list:dict, disc_persistant = False):
 
-        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
+        #choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
         paths = []
 
         for index, complete_entry in enumerate(db_load):
             if index in choices_list:
-
-                target = choices_list[index]['type']
                 entry = complete_entry["entry"]
-                
-                if "Opening" in target: SONG = entry["Openings"][target]
-                elif "Ending" in target: SONG = entry["Endings"][target]
+                for target in choices_list[index]['type']:
+                    
+                    if "Opening" in target: SONG = entry["Openings"][target]
+                    elif "Ending" in target: SONG = entry["Endings"][target]
 
-                #video download sincrono                                            
-                new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.mp4"
-                self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['video']}", new_path)
-                paths.append(new_path)
-
-                #audio download sincrono
-                new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.mp3"
-                self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['audio']}", new_path)
-                paths.append(new_path)
-                choices_list[index]['media_path'] = f"{self.dest_path}/{entry['mal_id']}"
-
+                    #video/audio download sincrono        
+                    for format in ("mp3", "mp4"):
+                        new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
+                        self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['video']}", new_path)
+                        paths.append(new_path)
+                        
+                    choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"
 
         return choices_list, paths, disc_persistant
 
