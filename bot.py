@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 import logging, json, random
 from os import listdir
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
@@ -14,9 +15,10 @@ with open('db.jsonl', 'r', encoding="utf-8") as json_file:
         entry = json.loads(line)
         data = entry["entry"]
 
-names = [data[i]['animeENName'] for i in range(len(data))]
-mp3_files = [f for f in listdir('downloaded') if f.endswith('.mp3')]
-
+#names = [data[i]['animeENName'] for i in range(len(data))]
+#mp3_files = [f for f in listdir('downloaded') if f.endswith('.mp3')]
+names = 0
+mp3_files = 0
 class Song:
     def __init__(self):
         self.id = None
@@ -53,22 +55,51 @@ async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Non c'è nessuna domanda in corso. Digita /quiz per iniziare un nuovo quiz.")
 
+
+
+def is_in(a:str, b:str):
+
+    if not a or not b:
+        return False
+    if a.lower() in b.lower():
+        return True
+    return False
+
+def search_by_name(query: str):
+    query = query.lower()
+    res = []
+
+    with open("db.jsonl", "r", encoding="utf-8") as f:
+        for line in f:
+            entry = json.loads(line)["entry"]
+
+            nameEN = entry["nameEN"]
+            nameJP = entry["nameJP"]
+
+            if is_in(query,nameEN) or is_in(query, nameJP):
+                res.append(entry) 
+    return res
+
+
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query
     if not query:
         return
     results = []
-    for n in names:
-        if query.lower() in n.lower():
-            results.append(
-                InlineQueryResultArticle(
-                    id=str(uuid4()),
-                    title=n,
-                    input_message_content=InputTextMessageContent(n)
+    for entry in search_by_name(query):
+        results.append(
+            InlineQueryResultArticle(
+                id=str(entry["mal_id"]),
+                title=entry["nameEN"],
+                description=entry["nameJP"],
+                thumbnail_url=entry["coverImg"]["large"],
+                input_message_content=InputTextMessageContent(
+                    message_text=f"Hai scelto: {entry['nameEN']}"
                 )
             )
+        )
+
     await context.bot.answer_inline_query(update.inline_query.id, results)
-    print(f"Inline query: {query}, results: {[n.title for n in results]}")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -90,3 +121,5 @@ if __name__ == '__main__':
     application.add_handler(catch_answer_handler)
 
     application.run_polling()
+
+
