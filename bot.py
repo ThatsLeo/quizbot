@@ -4,7 +4,9 @@ from os import listdir
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, filters
 from uuid import uuid4
-from scraper import search_by_name
+from scraper import Downloader, DB
+import asyncio
+import threading
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -60,33 +62,11 @@ async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
-async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.inline_query.query
-    if not query:
-        return
-    results = []
-    for entry in search_by_name(query):
-        results.append(
-            InlineQueryResultArticle(
-                id=str(entry["mal_id"]),
-                title=entry["nameEN"],
-                description=entry["nameJP"],
-                thumbnail_url=entry["coverImg"]["large"],
-                input_message_content=InputTextMessageContent(
-                    message_text=f"Hai scelto: {entry['nameEN']}"
-                )
-            )
-        )
-
-    await context.bot.answer_inline_query(update.inline_query.id, results)
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).build()
+    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
     
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
@@ -103,3 +83,65 @@ if __name__ == '__main__':
     application.run_polling()
 
 
+db = DB()
+
+class BOT:
+
+    def __init__(self):
+
+        self.inline_searchers = {}
+        self.inline_lock = threading.Lock()
+
+
+    def register_new_search(self, user_id):
+        new_event = threading.Event()
+
+        with self.inline_lock:
+            vecchio_evento = self.inline_searchers.get(user_id)
+            if vecchio_evento:
+                vecchio_evento.set()  # segnala al thread precedente di fermarsi
+
+            self.inline_searchers[user_id] = new_event
+
+        return new_event
+
+    def end_remove(self, user_id, event_lock : threading.Event):
+
+        with self.inline_lock:
+            last_active = self.inline_searchers.get(user_id) is event_lock
+            if last_active:
+                del self.inline_searchers[user_id]
+            return last_active
+
+    async def inline_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.inline_query.query
+        if not query:
+            return
+
+        user_id = update.effective_user.id
+        lock_event = self.register_new_search(user_id)
+
+        try:                    
+            found = await asyncio.to_thread(db.search_by_name_async, lock_event, query)
+        finally:
+            still_valid = self.end_remove(user_id, lock_event)
+        
+        if not still_valid or found is None:
+            return
+
+        results = []
+        
+        for entry in found:
+            results.append(
+                InlineQueryResultArticle(
+                    id=str(entry["mal_id"]),
+                    title=entry["nameEN"],
+                    description=entry["nameJP"],
+                    thumbnail_url=entry["coverImg"]["large"],
+                    input_message_content=InputTextMessageContent(
+                        message_text=f"Hai scelto: {entry['nameEN']}"
+                    )
+                )
+            )
+
+        await context.bot.answer_inline_query(update.inline_query.id, results)

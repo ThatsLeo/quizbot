@@ -5,6 +5,7 @@ import json
 import random
 from pathlib import Path
 from canvas import extract_sample_list
+import threading
 
 
 
@@ -79,7 +80,6 @@ def ani_query(page_start=1, page_end=None, type="ANIME", format="TV", ANI_URL = 
         page += 1
         time.sleep(1)
 
-
 #la funzione deve essere chiamata con una lista di id, se è solo uno allora [id]
 def cerca_anisongdb(mal_ids, filters = None, url = THEME_URL):
 
@@ -103,15 +103,6 @@ def cerca_anisongdb(mal_ids, filters = None, url = THEME_URL):
     
     risultati = response.json()
     return risultati
-
-#carica il db e lo restituisce come file.
-#non utilizzata al momento.
-def load_db(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return None
 
 #aggiunge una entry nel db.
 def add_entry(entry, path):
@@ -163,9 +154,7 @@ def popolate(page_start, page_end, path, sleep=None):
                     "song": song,
                     "difficulty": diff,
                     "video": video_id,
-                    "video_path": None,
-                    "audio": audio_id,
-                    "audio_path": None
+                    "audio": audio_id
                     }
 
                     if "Opening" in type:
@@ -188,94 +177,67 @@ def popolate(page_start, page_end, path, sleep=None):
                 add_entry(new, path)
 
 
+class DB:
+    def __init__(self, path):
+        self.db = self.load_db(path)
 
+    #carica il db e lo restituisce come file.
+    def load_db(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            return [json.loads(riga) for riga in f if riga.strip()]
 
-def download_media_list(db_path, dest_path, choices_list:dict, disc_persistant = False):
-
-    choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
-    mods = {}
-    paths = []
-
-    with open(db_path, "r", encoding="utf-8") as f:
-
-        for index, line in enumerate(f):
-            if index in choices_list:
-
-                target = choices_list[index]['type']
-
-                complete_entry = json.loads(line)
-                entry = complete_entry["entry"]
-                
-                modified = False
-                
-                if "Opening" in target: SONG = entry["Openings"][target]
-                elif "Ending" in target: SONG = entry["Endings"][target]
-
-                if SONG["video_path"] == None:
-                                                
-                    new_path = f"{dest_path}/{entry['mal_id']}/{SONG['song']}.mp4"
-                    download_file(f"{DOWNLOAD_URL}/{SONG['video']}", new_path)
-                    paths.append(new_path)
-
-                    if disc_persistant : SONG["video_path"] = new_path; modified = True
-
-                if SONG["audio_path"] == None:
-                
-                    new_path = f"{dest_path}/{entry['mal_id']}/{SONG['song']}.mp3"
-                    download_file(f"{DOWNLOAD_URL}/{SONG['audio']}", new_path)
-                    paths.append(new_path)
-                    choices_list[index]['media_path'] = f"{dest_path}/{entry['mal_id']}"
-
-                    if disc_persistant : SONG["audio_path"] = new_path; modified = True
-
-                if disc_persistant and modified:
-                    mods[index] = complete_entry
-
-    if mods:
-        with open(db_path, "r", encoding="utf-8") as f:
-            righe = f.readlines()
-        
-        for idx, updates in mods.items():
-            righe[idx] = json.dumps(updates, ensure_ascii=False) + "\n"
-        
-        with open(db_path, "w", encoding="utf-8") as f:
-            f.writelines(righe)
-
-    return choices_list, paths, disc_persistant
-
-
-#il parametro forced forza la riscrittura del file nonostante sia già presente.
-def download_file(url, percorso_destinazione, forced = False):
-    if not url:
-        return False
-    
-    output_file = Path(percorso_destinazione)
-
-    if output_file.exists() and not forced:
-        print("Path Exists")
-        return True
-    
-    output_file.parent.mkdir(exist_ok=True, parents=True)
-    
-    try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        with open(output_file, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    except Exception as err:
-        print(f"Errore scaricando {url}: {err}")
+    def _is_in_(self, a:str, b:str):
+        if not a or not b:
+            return False
+        if a.lower() in b.lower():
+            return True
         return False
 
-# difficoltà corrisponde a quella nel db
-def random_pick(db_path, diff_range, n_extractions, only_OP = True):
+    def search_by_name(self,query: str):
+        query = query.lower()
+        res = []
 
-    all_choices = dict()
+        for complete_entry in self.db:
+            entry = complete_entry["entry"]
 
-    with open(db_path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            entry = json.loads(line)['entry']
+            nameEN = entry["nameEN"]
+            nameJP = entry["nameJP"]
+
+            if self._is_in_(query,nameEN) or self._is_in_(query, nameJP):
+                res.append(entry) 
+        return res
+
+    #funzione pensata per le implementazioni real-time con un controllo periodico di un evento.
+    #La funzione è pensata per essere eseguita in un thread parallelo, se il flag si avvera allora ferma la ricerca.
+    def search_by_name_async(self, event_flag:threading.Event, query:str):
+        query = query.lower()
+        res = []
+
+        for complete_entry in self.db:
+
+            if event_flag.is_set():
+                return None
+            
+            entry = complete_entry["entry"]
+
+            nameEN = entry["nameEN"]
+            nameJP = entry["nameJP"]
+
+            if self._is_in_(query,nameEN) or self._is_in_(query, nameJP):
+                res.append(entry) 
+
+        if event_flag.is_set():
+            return None
+        return res
+
+
+    # difficoltà corrisponde a quella nel db
+    def random_pick(self, diff_range, n_extractions, only_OP = True):
+
+        all_choices = dict()
+
+        for i, complete_entry in enumerate(self.db):
+            entry = complete_entry['entry']
 
             SONGS = entry["Openings"]
             if not only_OP: SONGS = SONGS | entry["Endings"] # faccio un merge con le ending
@@ -286,37 +248,114 @@ def random_pick(db_path, diff_range, n_extractions, only_OP = True):
                 if diff and diff <= diff_range[1] and diff >= diff_range[0]:
 
                     all_choices[i] = {'type' : song_type, 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
-    f.close()
 
-    if n_extractions > len(all_choices) : n_extractions = len(all_choices)
-    choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
-    return choices
+        if n_extractions > len(all_choices) : n_extractions = len(all_choices)
+        choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
+        return choices
 
-def is_in(a:str, b:str):
+    def get_db(self):
+        return self.db
 
-    if not a or not b:
-        return False
-    if a.lower() in b.lower():
-        return True
-    return False
+class Downloader:
 
-def search_by_name(query: str):
-    query = query.lower()
-    res = []
+    def __init__(self, dl_url, dest_path):
 
-    with open("db.jsonl", "r", encoding="utf-8") as f:
-        for line in f:
-            entry = json.loads(line)["entry"]
+        self._download_locks = {}
+        self._registry_lock = threading.Lock()
+        self.DOWNLOAD_URL = dl_url
+        self.dest_path = dest_path
 
-            nameEN = entry["nameEN"]
-            nameJP = entry["nameJP"]
+    #La funzione ora si aspetta una copia completa in RAM del DB.
+    def download_media_list(self, db_load, choices_list:dict, disc_persistant = False):
 
-            if is_in(query,nameEN) or is_in(query, nameJP):
-                res.append(entry) 
-    return res
+        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
+        paths = []
+
+        for index, complete_entry in enumerate(db_load):
+            if index in choices_list:
+
+                target = choices_list[index]['type']
+                entry = complete_entry["entry"]
+                
+                if "Opening" in target: SONG = entry["Openings"][target]
+                elif "Ending" in target: SONG = entry["Endings"][target]
+
+                #video download sincrono                                            
+                new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.mp4"
+                self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['video']}", new_path)
+                paths.append(new_path)
+
+                #audio download sincrono
+                new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.mp3"
+                self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['audio']}", new_path)
+                paths.append(new_path)
+                choices_list[index]['media_path'] = f"{self.dest_path}/{entry['mal_id']}"
+
+
+        return choices_list, paths, disc_persistant
+
+
+    #il parametro forced forza la riscrittura del file nonostante sia già presente.
+    #Pensata per gestire download concorrenti sullo stesso file.
+    #Se due thread provano a scaricare lo stesso file, il primo che arriva prende il lock e mette in attesa
+    #tutti gli altri fino al completamento.
+    def download_file_sync(self, url, dest_path, forced=False):
+        output_file = Path(dest_path)
+        chiave = str(output_file)
+
+        if output_file.exists() and not forced:
+            return True
+
+        with self._registry_lock:
+            if chiave in self._download_locks:
+                event = self._download_locks[chiave]
+                sono_io_il_downloader = False
+            else:
+                event = threading.Event()
+                self._download_locks[chiave] = event
+                sono_io_il_downloader = True
+
+        if not sono_io_il_downloader:
+            event.wait()
+            return output_file.exists()
+
+        try:
+            risultato = self._esegui_download(url, output_file)
+        finally:
+            event.set()
+            with self._registry_lock:
+                del self._download_locks[chiave]
+
+        return risultato
+
+    #funzione esecutiva del vero download, viene chiamata unicamente dopo tutti i controlli.
+    def _esegui_download(self, url, output_file):
+        output_file.parent.mkdir(exist_ok=True, parents=True)
+        percorso_temp = output_file.with_suffix(output_file.suffix + ".part")
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            with open(percorso_temp, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            percorso_temp.rename(output_file)
+            return True
+        except Exception as err:
+            print(f"Errore scaricando {url}: {err}")
+            percorso_temp.unlink(missing_ok=True)
+            return False
+
 
 if __name__== '__main__':
-    choices = random_pick("db.jsonl",[60,100], 5)
-    sorted, paths, persistant = download_media_list("db.jsonl","downloads",choices)
+    db_obj = DB("db.jsonl")
+    db = db_obj.get_db()
+
+    dl = Downloader()
+
+    choices = db.random_pick(db,[60,100], 5)
+    sorted, paths, persistant = dl.download_media_list(db,choices)
     for song in extract_sample_list(paths):
         print(song)
+
+
+
