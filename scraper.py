@@ -175,6 +175,22 @@ def popolate(page_start, page_end, path, sleep=None):
                     }
                 }
                 add_entry(new, path)
+    deduplicate_db(path)
+
+def deduplicate_db(percorso):
+    seen = {}
+    
+    with open(percorso, "r", encoding="utf-8") as f:
+        for row in f:
+            row = row.strip()
+            if row:
+                obj = json.loads(row)
+                mal_id = obj["entry"]["mal_id"]
+                seen[mal_id] = obj
+    
+    with open(percorso, "w", encoding="utf-8") as f:
+        for obj in seen.values():
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 
 class DB:

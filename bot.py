@@ -58,32 +58,7 @@ async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Non c'è nessuna domanda in corso. Digita /quiz per iniziare un nuovo quiz.")
 
-
-
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
-
-if __name__ == '__main__':
-    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
-    
-    start_handler = CommandHandler('start', start)
-    application.add_handler(start_handler)
-
-    inline_search_handler = InlineQueryHandler(inline_search)
-    application.add_handler(inline_search_handler)
-
-    quiz_handler = CommandHandler('quiz', quiz)
-    application.add_handler(quiz_handler)  
-
-    catch_answer_handler = MessageHandler(filters.TEXT, catch_answer)
-    application.add_handler(catch_answer_handler)
-
-    application.run_polling()
-
-
-db = DB()
+db = DB("db.jsonl")
 
 class BOT:
 
@@ -145,3 +120,28 @@ class BOT:
             )
 
         await context.bot.answer_inline_query(update.inline_query.id, results)
+
+bot = BOT()
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
+
+if __name__ == '__main__':
+    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
+    
+    start_handler = CommandHandler('start', start)
+    application.add_handler(start_handler)
+
+    inline_search_handler = InlineQueryHandler(bot.inline_search)
+    application.add_handler(inline_search_handler)
+
+    quiz_handler = CommandHandler('quiz', quiz)
+    application.add_handler(quiz_handler)  
+
+    catch_answer_handler = MessageHandler(filters.TEXT, catch_answer)
+    application.add_handler(catch_answer_handler)
+
+    application.run_polling()
+
+
