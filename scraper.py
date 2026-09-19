@@ -285,7 +285,7 @@ class Downloader:
     #La funzione ora si aspetta una copia completa in RAM del DB.
     def download_media_list(self, db_load, choices_list:dict, disc_persistant = False):
 
-        #choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
+        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
         paths = []
 
         for index, complete_entry in enumerate(db_load):
@@ -298,8 +298,9 @@ class Downloader:
 
                     #video/audio download sincrono        
                     for format in ("mp3", "mp4"):
+                        format_name = 'audio' if format=="mp3" else 'video'
                         new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
-                        self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG['video']}", new_path)
+                        self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[format_name]}", new_path)
                         paths.append(new_path)
                         
                     choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"

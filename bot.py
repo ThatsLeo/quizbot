@@ -1,27 +1,18 @@
 # pyright: reportMissingImports=false
 import logging, json, random
 from os import listdir
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, filters
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, ConversationHandler, CallbackQueryHandler,  filters
 from uuid import uuid4
 from scraper import Downloader, DB
 import asyncio
 import threading
-
+from song_handler import generate_quiz
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-with open('db.jsonl', 'r', encoding="utf-8") as json_file:
-    for i, line in enumerate(json_file):
-        entry = json.loads(line)
-        data = entry["entry"]
-
-#names = [data[i]['animeENName'] for i in range(len(data))]
-#mp3_files = [f for f in listdir('downloaded') if f.endswith('.mp3')]
-names = 0
-mp3_files = 0
 class Song:
     def __init__(self):
         self.id = None
@@ -31,21 +22,32 @@ class Song:
     def set_song(self, mp3_file):
         self.mp3_file = mp3_file
         self.id = int(mp3_file.split(' ')[0])
-        self.animeENName = [data[i]['animeENName'] for i in range(len(data)) if data[i]['annId'] == self.id][0]
         self.AwaitingAnswer = True
     def got_answer(self):
         self.__init__()
 
 current_song=Song()
 
-def random_mp3_file():
-    return random.choice(mp3_files)
-
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mp3 = random_mp3_file()
-    current_song.set_song(mp3)
-    await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloaded/{mp3}', 'rb'))
+    keyboard = [
+        [InlineKeyboardButton("Inizia", callback_data="1"),],
+        [InlineKeyboardButton("Annulla", callback_data="2")],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text("Eccoci al quizzettone pazzo, pronti?", reply_markup=reply_markup)
+
+    #choices, sampler = generate_quiz('easy', 3)
+    #await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloaded/{mp3}', 'rb'))
     await context.bot.send_message(chat_id=update.effective_chat.id, text="utilizza l'inline per cercare la risposta")
+    return 'ASKING_QUIZ'
+
+async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(text="E mo si inizia")
+    return 'START_QUIZ'
 
 async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_song.AwaitingAnswer:
@@ -54,19 +56,16 @@ async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta corretta!")
             current_song.got_answer()
         else:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Risposta sbagliata!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta sbagliata!")
     else:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Non c'è nessuna domanda in corso. Digita /quiz per iniziare un nuovo quiz.")
 
 db = DB("db.jsonl")
 
 class BOT:
-
     def __init__(self):
-
         self.inline_searchers = {}
         self.inline_lock = threading.Lock()
-
 
     def register_new_search(self, user_id):
         new_event = threading.Event()
@@ -81,7 +80,6 @@ class BOT:
         return new_event
 
     def end_remove(self, user_id, event_lock : threading.Event):
-
         with self.inline_lock:
             last_active = self.inline_searchers.get(user_id) is event_lock
             if last_active:
@@ -136,12 +134,23 @@ if __name__ == '__main__':
     inline_search_handler = InlineQueryHandler(bot.inline_search)
     application.add_handler(inline_search_handler)
 
-    quiz_handler = CommandHandler('quiz', quiz)
-    application.add_handler(quiz_handler)  
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("quiz", quiz)],
+        states={
+            'ASKING_QUIZ': [
+                CallbackQueryHandler(start_quiz, pattern="^" + '1' + "$"),
+                CallbackQueryHandler(start, pattern="^" + '2' + "$"),
+            ],
+            'START_QUIZ': [
+                MessageHandler(filters.TEXT, catch_answer),
+                CommandHandler("quiz", quiz)
+            ],
+        },
+        fallbacks=[CommandHandler("start", start)],
+    )
 
-    catch_answer_handler = MessageHandler(filters.TEXT, catch_answer)
-    application.add_handler(catch_answer_handler)
+    application.add_handler(conv_handler)
 
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

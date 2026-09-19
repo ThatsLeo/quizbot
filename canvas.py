@@ -202,5 +202,3 @@ def extract_sample_list(path_list, duration=15):
         best_start_sec = sampling_pipeline(path)
         cut_audio(path, best_start_sec, output_path, duration=duration)
         yield output_path
-
-        
