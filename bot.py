@@ -27,7 +27,7 @@ class Song:
     def got_answer(self):
         self.__init__()
 
-current_song=Song()
+current_song = Song()
 
 class QuizManager:
     def __init__(self):
@@ -58,11 +58,12 @@ async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
         ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    print(update.effective_user)
+    user = update.effective_user
+    user_tag = f"@{user.username}" if user.username else user.first_name
+    print(user_tag)
     
     await query.answer()
-    await query.edit_message_text(text=f"{query._get_message().text}\n@{update.effective_user.username}", reply_markup=reply_markup)
+    await query.edit_message_text(text=f"{query.message.text}\n@{user_tag}", reply_markup=reply_markup)
     return 'ASKING_QUIZ'
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,15 +73,17 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return 'START_QUIZ'
 
 async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.delete_message()
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.delete_message()
+    elif update.message:
+        await update.message.reply_text("Quiz Annullato!")
     return ConversationHandler.END
 
 async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_song.AwaitingAnswer:
         answer = update.message.text
-        if answer.lower() == current_song.animeENName.lower():
+        if answer.lower() == current_song.animeENName.lower() or answer.lower() == current_song.animeJPName.lower():
             await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta corretta!")
             current_song.got_answer()
         else:
@@ -153,7 +156,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
+    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).build()
     
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
