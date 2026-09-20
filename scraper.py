@@ -308,10 +308,8 @@ class Downloader:
                         if not sample_path.exists():
 
                             self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[type]}", new_path)
-                            media_list.append(new_path)
-
-                        else:
-                            media_list.append(new_path)
+                            
+                        media_list.append(new_path)
 
                     paths.append(tuple(media_list)) 
                     choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"
