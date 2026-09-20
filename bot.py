@@ -8,6 +8,7 @@ from scraper import Downloader, DB
 import asyncio
 import threading
 from song_handler import generate_quiz
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -28,19 +29,40 @@ class Song:
 
 current_song=Song()
 
+class QuizManager:
+    def __init__(self):
+        active_quizzes = set()
+    def add_chat(self, chat_id):
+        pass
+
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("Inizia", callback_data="1"),],
-        [InlineKeyboardButton("Annulla", callback_data="2")],
+        [InlineKeyboardButton("Join", callback_data="join_quiz")],
+        [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
+        [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await update.message.reply_text("Eccoci al quizzettone pazzo, pronti?", reply_markup=reply_markup)
+    await update.message.reply_text("Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:", reply_markup=reply_markup)
 
     #choices, sampler = generate_quiz('easy', 3)
     #await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloaded/{mp3}', 'rb'))
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="utilizza l'inline per cercare la risposta")
+    return 'ASKING_QUIZ'
+
+async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    keyboard = [
+            [InlineKeyboardButton("Join", callback_data="join_quiz")],
+            [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
+            [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
+        ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    print(update.effective_user)
+    
+    await query.answer()
+    await query.edit_message_text(text=f"{query._get_message().text}\n@{update.effective_user.username}", reply_markup=reply_markup)
     return 'ASKING_QUIZ'
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,6 +70,12 @@ async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await query.edit_message_text(text="E mo si inizia")
     return 'START_QUIZ'
+
+async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.delete_message()
+    return ConversationHandler.END
 
 async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_song.AwaitingAnswer:
@@ -121,7 +149,6 @@ class BOT:
 
 bot = BOT()
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
 
@@ -138,15 +165,17 @@ if __name__ == '__main__':
         entry_points=[CommandHandler("quiz", quiz)],
         states={
             'ASKING_QUIZ': [
-                CallbackQueryHandler(start_quiz, pattern="^" + '1' + "$"),
-                CallbackQueryHandler(start, pattern="^" + '2' + "$"),
+                CallbackQueryHandler(join_quiz, pattern="^" + 'join_quiz' + "$"),
+                CallbackQueryHandler(start_quiz, pattern="^" + 'start_quiz' + "$"),
+                CallbackQueryHandler(end_quiz, pattern="^" + 'end_quiz' + "$")
             ],
             'START_QUIZ': [
                 MessageHandler(filters.TEXT, catch_answer),
                 CommandHandler("quiz", quiz)
             ],
         },
-        fallbacks=[CommandHandler("start", start)],
+        fallbacks=[CommandHandler("end_quiz", end_quiz)],
+        per_user=False
     )
 
     application.add_handler(conv_handler)

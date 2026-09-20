@@ -17,10 +17,4 @@ def generate_quiz(diff : str, number_of_songs: int, only_openings : bool = True)
     choices = db_obj.random_pick(difficulty[diff], number_of_songs, only_OP=only_openings)
     choices_info, paths, persistant = dl.download_media_list(db,choices)
     gen = extract_sample_list(paths, persistant)
-    for _ in gen:
-        print(_)
-    #print(choices_info)
-    #print(paths)
     return choices_info, gen
-
-print(generate_quiz("easy", 3))
