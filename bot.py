@@ -31,11 +31,24 @@ current_song = Song()
 
 class QuizManager:
     def __init__(self):
-        active_quizzes = set()
+        self.active_chats = dict()
+        self._registry_lock = threading.Lock()
     def add_chat(self, chat_id):
-        pass
+        with self._registry_lock:
+            self.active_chats[chat_id] = {'members' : set(),
+                                                  'quiz': ''}
+    def add_member(self, chat_id, user_tag):
+        with self._registry_lock:
+            self.active_chats[chat_id]['members'].add(user_tag)
+
+quiz_manager = QuizManager()
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_chat.id in quiz_manager.active_chats: #in questa chat è già attivo un quiz
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Quiz ancora in corso.\nDigita /end_quiz per annullarlo")
+        return
+    else: quiz_manager.add_chat(update.effective_chat.id)
     keyboard = [
         [InlineKeyboardButton("Join", callback_data="join_quiz")],
         [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
@@ -43,12 +56,10 @@ async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text("Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:", reply_markup=reply_markup)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Eccoci al quizzettone pazzo, pronti?", reply_markup=reply_markup)
 
     #choices, sampler = generate_quiz('easy', 3)
     #await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloaded/{mp3}', 'rb'))
-    return 'ASKING_QUIZ'
 
 async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -59,18 +70,21 @@ async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     user = update.effective_user
-    user_tag = f"@{user.username}" if user.username else user.first_name
-    print(user_tag)
-    
-    await query.answer()
-    await query.edit_message_text(text=f"{query.message.text}\n@{user_tag}", reply_markup=reply_markup)
-    return 'ASKING_QUIZ'
+    user_tag = f"@{user.username}" if user.username else user.first_name+'['+str(user.id)+']'
+
+    if user_tag not in quiz_manager.active_chats[update.effective_chat.id]['members']:
+        quiz_manager.add_member(update.effective_chat.id, user_tag)
+        formatted_members_list = '\n'.join(quiz_manager.active_chats[update.effective_chat.id]['members'])
+        text = "Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:\n"+formatted_members_list
+        await query.answer()
+        await query.edit_message_text(text=text, reply_markup=reply_markup)
+    else:
+        await context.bot.answerCallbackQuery(callback_query_id=query.id, text="Sei già dentro caro", show_alert=True)
 
 async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text(text="E mo si inizia")
-    return 'START_QUIZ'
 
 async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
@@ -78,7 +92,7 @@ async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.delete_message()
     elif update.message:
         await update.message.reply_text("Quiz Annullato!")
-    return ConversationHandler.END
+    quiz_manager.active_chats.pop(update.effective_chat.id)
 
 async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_song.AwaitingAnswer:
@@ -156,7 +170,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
 
 if __name__ == '__main__':
-    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).build()
+    application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
     
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
@@ -164,24 +178,17 @@ if __name__ == '__main__':
     inline_search_handler = InlineQueryHandler(bot.inline_search)
     application.add_handler(inline_search_handler)
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("quiz", quiz)],
-        states={
-            'ASKING_QUIZ': [
-                CallbackQueryHandler(join_quiz, pattern="^" + 'join_quiz' + "$"),
-                CallbackQueryHandler(start_quiz, pattern="^" + 'start_quiz' + "$"),
-                CallbackQueryHandler(end_quiz, pattern="^" + 'end_quiz' + "$")
-            ],
-            'START_QUIZ': [
-                MessageHandler(filters.TEXT, catch_answer),
-                CommandHandler("quiz", quiz)
-            ],
-        },
-        fallbacks=[CommandHandler("end_quiz", end_quiz)],
-        per_user=False
-    )
+    quiz_handler = CommandHandler("quiz", quiz)
+    application.add_handler(quiz_handler)
 
-    application.add_handler(conv_handler)
+    end_quiz_handler = CommandHandler("end_quiz", end_quiz)
+    application.add_handler(end_quiz_handler)
+
+    callback_handlers= [CallbackQueryHandler(join_quiz, pattern="^" + 'join_quiz' + "$"),
+                        CallbackQueryHandler(start_quiz, pattern="^" + 'start_quiz' + "$"),
+                        CallbackQueryHandler(end_quiz, pattern="^" + 'end_quiz' + "$")]
+
+    for handler in callback_handlers: application.add_handler(handler)
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
