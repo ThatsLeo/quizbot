@@ -32,23 +32,55 @@ current_song = Song()
 class QuizManager:
     def __init__(self):
         self.active_chats = dict()
-        self._registry_lock = threading.Lock()
-    def add_chat(self, chat_id):
-        with self._registry_lock:
-            self.active_chats[chat_id] = {'members' : set(),
-                                                  'quiz': ''}
-    def add_member(self, chat_id, user_tag):
-        with self._registry_lock:
-            self.active_chats[chat_id]['members'].add(user_tag)
+        self.active_chats_lock = {}
+
+    def get_lock(self, chat_id):
+        if chat_id not in self.active_chats_lock:
+            self.active_chats_lock[chat_id] = asyncio.Lock()
+        return self.active_chats_lock[chat_id]
+
+    async def add_chat(self, chat_id):
+        lock = self.get_lock(chat_id)
+
+        async with lock:
+            if not chat_id in self.active_chats:
+                self.active_chats[chat_id] = {'members' : set(),
+                                  'quiz': ''}
+                return True
+            return False
+
+    async def add_member(self, chat_id, user_tag):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if not user_tag in self.active_chats[chat_id]['members']:
+                self.active_chats[chat_id]['members'].add(user_tag)
+                return True
+            return False
+        
+    async def remove_member(self, chat_id, user_tag):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['members'].discard(user_tag)
+
+    async def remove_chat(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if chat_id in self.active_chats:
+                self.active_chats.pop(chat_id)
+
+    def get_members(self, chat_id):
+        return self.active_chats[chat_id]['members']
+
 
 quiz_manager = QuizManager()
 
 async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if update.effective_chat.id in quiz_manager.active_chats: #in questa chat è già attivo un quiz
+    added = await quiz_manager.add_chat(update.effective_chat.id)
+
+    if not added:
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Quiz ancora in corso.\nDigita /end_quiz per annullarlo")
         return
-    else: quiz_manager.add_chat(update.effective_chat.id)
     keyboard = [
         [InlineKeyboardButton("Join", callback_data="join_quiz")],
         [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
@@ -70,11 +102,14 @@ async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     user = update.effective_user
+    chat_id = update.effective_chat.id
     user_tag = f"@{user.username}" if user.username else user.first_name+'['+str(user.id)+']'
 
-    if user_tag not in quiz_manager.active_chats[update.effective_chat.id]['members']:
-        quiz_manager.add_member(update.effective_chat.id, user_tag)
-        formatted_members_list = '\n'.join(quiz_manager.active_chats[update.effective_chat.id]['members'])
+
+    added = await quiz_manager.add_member(chat_id, user_tag)
+
+    if added:
+        formatted_members_list = '\n'.join(quiz_manager.get_members(chat_id))
         text = "Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:\n"+formatted_members_list
         await query.answer()
         await query.edit_message_text(text=text, reply_markup=reply_markup)
@@ -92,7 +127,7 @@ async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.delete_message()
     elif update.message:
         await update.message.reply_text("Quiz Annullato!")
-    quiz_manager.active_chats.pop(update.effective_chat.id)
+    await quiz_manager.remove_chat(update.effective_chat.id)
 
 async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_song.AwaitingAnswer:
