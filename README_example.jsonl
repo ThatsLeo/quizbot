@@ -19,17 +19,13 @@ COMMENTO:
                 "song": "Yuusha",
                 "difficulty": 76.0,
                 "video": "ypdy3a.webm",
-                "video_path": null,
-                "audio": "acloki.mp3",
-                "audio_path": null
+                "audio": "acloki.mp3"
             },
             "Opening 2": {
                 "song": "Haru",
                 "difficulty": 70.0,
                 "video": "jkbc3w.webm",
-                "video_path": null,
-                "audio": "nwb51k.mp3",
-                "audio_path": null
+                "audio": "nwb51k.mp3"
             }
         },
         "Endings": {
@@ -37,9 +33,7 @@ COMMENTO:
                 "song": "Anytime Anywhere",
                 "difficulty": 66.0,
                 "video": "8dlrnd.webm",
-                "video_path": null,
-                "audio": "jl4nif.mp3",
-                "audio_path": null
+                "audio": "jl4nif.mp3"
             }
         }
     }

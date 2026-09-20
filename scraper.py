@@ -192,6 +192,9 @@ def deduplicate_db(percorso):
         for obj in seen.values():
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
+def get_samplepath(dest_path):
+    sample_path = Path(dest_path[:-4] + "_sample" + dest_path[-4:])
+    return  sample_path
 
 class DB:
     def __init__(self, path):
@@ -297,12 +300,20 @@ class Downloader:
                     elif "Ending" in target: SONG = entry["Endings"][target]
 
                     #video/audio download sincrono        
-                    for format in ("mp3", "mp4"):
-                        format_name = 'audio' if format=="mp3" else 'video'
+                    media_list = []
+                    for format, type in (("mp3", "audio"), ("mp4", "video")):
                         new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
-                        self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[format_name]}", new_path)
-                        paths.append(new_path)
-                        
+
+                        sample_path = get_samplepath(new_path)
+                        if not sample_path.exists():
+
+                            self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[type]}", new_path)
+                            media_list.append(new_path)
+
+                        else:
+                            media_list.append(new_path)
+
+                    paths.append(tuple(media_list)) 
                     choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"
 
         return choices_list, paths, disc_persistant
@@ -313,6 +324,7 @@ class Downloader:
     #Se due thread provano a scaricare lo stesso file, il primo che arriva prende il lock e mette in attesa
     #tutti gli altri fino al completamento.
     def download_file_sync(self, url, dest_path, forced=False):
+
         output_file = Path(dest_path)
         chiave = str(output_file)
 

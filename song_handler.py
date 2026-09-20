@@ -1,4 +1,4 @@
-from scraper import DB, Downloader
+from scraper import DB, Downloader, get_samplepath
 from canvas import extract_sample_list
 import time
 
@@ -16,7 +16,11 @@ def generate_quiz(diff : str, number_of_songs: int, only_openings : bool = True)
     a = time.process_time()
     choices = db_obj.random_pick(difficulty[diff], number_of_songs, only_OP=only_openings)
     choices_info, paths, persistant = dl.download_media_list(db,choices)
-    gen = extract_sample_list(paths)
-    print(choices_info)
-    print(paths)
+    gen = extract_sample_list(paths, persistant)
+    for _ in gen:
+        print(_)
+    #print(choices_info)
+    #print(paths)
     return choices_info, gen
+
+print(generate_quiz("easy", 3))

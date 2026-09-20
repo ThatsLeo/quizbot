@@ -2,6 +2,7 @@ import librosa
 import numpy as np
 import matplotlib.pyplot as plt
 import subprocess
+from pathlib import Path
 
 
 def compute_chroma_flux(chroma):
@@ -79,17 +80,20 @@ def sampling_pipeline(track_path, hop_length=1024, window_sec=15,
     return librosa.frames_to_time(best_start, sr=sr, hop_length=hop_length)
 
 
-def cut_audio(input_path, start_sec, output_path, duration=15):
+def cut(input_path, start_sec, output_path, duration=15):
     subprocess.run([
         "ffmpeg",
         "-y",                      # sovrascrive output_path se esiste già
         "-ss", str(start_sec),     # punto di inizio
         "-t", str(duration),       # durata del taglio
         "-i", input_path,
-        "-acodec", "copy",         # nessuna ricodifica, solo taglio (più veloce)
+        "-c", "copy",         # nessuna ricodifica, solo taglio (più veloce)
         output_path
     ], check=True, capture_output=True)
     return output_path
+
+
+
 
 def create_video(thumbnail, sample, title_path, artist_path, output_path, duration=15):
     canvas_size = 1080
@@ -178,6 +182,18 @@ def create_video(thumbnail, sample, title_path, artist_path, output_path, durati
     return output_path
 
 
+def extract_audio_from_video(input_path, output_path):
+
+    subprocess.run([
+        "ffmpeg",
+        "-y",                      # sovrascrive output_path se esiste già
+        "-i", input_path,
+        "-f", "mp3",               #formato in uscita
+        "-ab", "192000",           #codifica, in questo caso 192Kbps
+        "-vn", output_path,
+    ], check=True, capture_output=True)
+    return output_path
+
 
 def _write_text_file(text, path):
     with open(path, "w", encoding="utf-8") as f:
@@ -188,17 +204,36 @@ def _write_text_file(text, path):
 def extract_sample(input_path, output_path, duration=15):
 
     best_start_sec = sampling_pipeline(input_path)
-    cut_audio(input_path, best_start_sec, output_path, duration=duration)
+    cut(input_path, best_start_sec, output_path, duration=duration)
     return output_path
 
+def is_sample(path):
+    return "sample" in path
 
 
-def extract_sample_list(path_list, duration=15):
+def extract_sample_list(path_list: list[tuple], disc_persistant, duration=15):
+    from scraper import get_samplepath
+    for mp3, mp4 in path_list:
+        out = []
+        best_start_sec = None
 
-    path_list = [a for a in path_list if ".mp3" in a]
-    for path in path_list:
-        output_path =path[:-4] + "_sample" + path[-4:]
+        if mp3 is None:
+            mp3 = mp4[:-1] + "3"
+            extract_audio_from_video(mp4, mp3)
 
-        best_start_sec = sampling_pipeline(path)
-        cut_audio(path, best_start_sec, output_path, duration=duration)
-        yield output_path
+        for format in (mp3, mp4):
+
+            output_path = get_samplepath(format)
+
+            if not output_path.exists():
+                if best_start_sec is None:
+                    best_start_sec = sampling_pipeline(mp3)
+                cut(format, best_start_sec, output_path, duration=duration)
+
+            out.append(str(output_path))
+
+        if not disc_persistant:
+            Path(mp3).unlink(missing_ok=True)
+            Path(mp4).unlink(missing_ok=True)
+
+        yield tuple(out)
