@@ -237,4 +237,4 @@ def extract_sample_list(path_list: list[tuple], choice_list, disc_persistant, du
             Path(mp3).unlink(missing_ok=True)
             Path(mp4).unlink(missing_ok=True)
 
-        yield tuple((out,choice_list[keys[i]]))
+        yield choice_list[keys[i]]

@@ -19,3 +19,5 @@ def generate_quiz(diff : str, number_of_songs: int, only_openings : bool = True)
     gen = extract_sample_list(paths, choices_info, persistant)
     for _ in gen:
         print(_)
+
+generate_quiz("easy", 1, True)
