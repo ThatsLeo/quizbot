@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import subprocess
 from pathlib import Path
+import os
 
 
 def compute_chroma_flux(chroma):
@@ -81,18 +82,33 @@ def sampling_pipeline(track_path, hop_length=1024, window_sec=15,
 
 
 def cut(input_path, start_sec, output_path, duration=15):
-    subprocess.run([
-        "ffmpeg",
-        "-y",                      # sovrascrive output_path se esiste già
-        "-ss", str(start_sec),     # punto di inizio
-        "-t", str(duration),       # durata del taglio
+    is_video = os.path.splitext(input_path)[1].lower() in (".mp4", ".webm", ".mkv", ".mov")
+
+    comando = [
+        "ffmpeg", "-y",
+        "-ss", str(start_sec),
+        "-t", str(duration),
         "-i", input_path,
-        "-c", "copy",         # nessuna ricodifica, solo taglio (più veloce)
-        output_path
-    ], check=True, capture_output=True)
+    ]
+
+    if is_video:
+        comando += [
+            "-c:v", "libx264",
+            "-profile:v", "baseline",
+            "-level", "3.0",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-movflags", "+faststart",
+        ]
+    else:
+        comando += [
+            "-c:a", "libmp3lame",
+        ]
+
+    comando.append(output_path)
+
+    subprocess.run(comando, check=True, capture_output=True)
     return output_path
-
-
 
 
 def create_video(thumbnail, sample, title_path, artist_path, output_path, duration=15):

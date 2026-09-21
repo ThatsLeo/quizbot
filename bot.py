@@ -1,7 +1,7 @@
 # pyright: reportMissingImports=false
 import logging, json, random
 from os import listdir
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, ConversationHandler, CallbackQueryHandler,  filters
 from uuid import uuid4
 from scraper import Downloader, DB
@@ -55,6 +55,10 @@ class QuizManager:
     async def add_member(self, chat_id, user_tag):
         lock = self.get_lock(chat_id)
         async with lock:
+
+            if self.active_chats[chat_id]["quiz"] == "started":
+                return "started"
+
             if not user_tag in self.active_chats[chat_id]['members']:
                 self.active_chats[chat_id]['members'].add(user_tag)
                 return True
@@ -172,8 +176,8 @@ class BOT:
             choices = self.db_obj.random_pick(diff, n_songs, only_OP=only_OP)
             choices_info, paths, persistant = self.downloader.download_media_list(self.db_obj.get_db(),choices, disc_persistant)
 
-            for sample, song_info in extract_sample_list(paths, choices_info, persistant):
-                queue.put((sample,song_info))
+            for song_info in extract_sample_list(paths, choices_info, persistant):
+                queue.put(song_info)
         except Exception as e:
             queue.put(e)
         finally:
@@ -225,7 +229,10 @@ class BOT:
 
         added = await self.quiz_manager.add_member(chat_id, user_tag)
 
-        if added:
+        if added == "started":
+            await query.answer(text="Il quiz è iniziato senza di te\nah ah ah\nscemo", show_alert=True)
+
+        elif added:
             members = self.quiz_manager.get_members(chat_id)
             text = "Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:\n" + '\n'.join(members)
             keyboard = [
@@ -240,8 +247,14 @@ class BOT:
 
     async def start_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+
+        queue = self.start_quiz_pipeline([70,100], 1, True)
+        song = await self.get_next_sample(queue)
+
         await query.answer()
-        await query.edit_message_text(text="E mo si inizia")
+        with open(f"{song["media_generic_path"]}" + "_sample.mp4", "rb") as f:
+            await context.bot.send_video(update.effective_chat.id, f, supports_streaming=True, write_timeout=60, read_timeout=60)
+        #await query.edit_message_text(text=f"{song}")
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:

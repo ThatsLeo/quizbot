@@ -6,9 +6,7 @@ path = [
     ('downloads/32937/TOMORROW_sample.mp3', 'downloads/32937/TOMORROW_sample.mp4')
 ]
 
-gen = extract_sample_list(path, disc_persistant=False)
-for _ in gen:
-    print(_)
+
 #print(choices_info)
 #print(paths)
 
