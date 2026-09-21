@@ -8,6 +8,9 @@ from scraper import Downloader, DB
 import asyncio
 import threading
 from song_handler import generate_quiz
+from canvas import extract_sample_list
+from queue import Queue
+
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -71,82 +74,46 @@ class QuizManager:
     def get_members(self, chat_id):
         return self.active_chats[chat_id]['members']
 
+    async def set_current_song(self, chat_id, song):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['current_song'] = song
+
+    async def get_current_song(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]['current_song']
+
+    async def set_sample_queue(self, chat_id, queue):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['sample_queue'] = queue
+
+    async def get_sample_queue(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]['sample_queue']
+
 
 quiz_manager = QuizManager()
-
-async def quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    added = await quiz_manager.add_chat(update.effective_chat.id)
-
-    if not added:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Quiz ancora in corso.\nDigita /end_quiz per annullarlo")
-        return
-    keyboard = [
-        [InlineKeyboardButton("Join", callback_data="join_quiz")],
-        [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
-        [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Eccoci al quizzettone pazzo, pronti?", reply_markup=reply_markup)
-
-    #choices, sampler = generate_quiz('easy', 3)
-    #await context.bot.send_audio(chat_id=update.effective_chat.id, audio=open(f'downloaded/{mp3}', 'rb'))
-
-async def join_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    keyboard = [
-            [InlineKeyboardButton("Join", callback_data="join_quiz")],
-            [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
-            [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
-        ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    user = update.effective_user
-    chat_id = update.effective_chat.id
-    user_tag = f"@{user.username}" if user.username else user.first_name+'['+str(user.id)+']'
-
-
-    added = await quiz_manager.add_member(chat_id, user_tag)
-
-    if added:
-        formatted_members_list = '\n'.join(quiz_manager.get_members(chat_id))
-        text = "Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:\n"+formatted_members_list
-        await query.answer()
-        await query.edit_message_text(text=text, reply_markup=reply_markup)
-    else:
-        await context.bot.answerCallbackQuery(callback_query_id=query.id, text="Sei già dentro caro", show_alert=True)
-
-async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(text="E mo si inizia")
-
-async def end_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.delete_message()
-    elif update.message:
-        await update.message.reply_text("Quiz Annullato!")
-    await quiz_manager.remove_chat(update.effective_chat.id)
-
-async def catch_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if current_song.AwaitingAnswer:
-        answer = update.message.text
-        if answer.lower() == current_song.animeENName.lower() or answer.lower() == current_song.animeJPName.lower():
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta corretta!")
-            current_song.got_answer()
-        else:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta sbagliata!")
-    else:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="Non c'è nessuna domanda in corso. Digita /quiz per iniziare un nuovo quiz.")
 
 db = DB("db.jsonl")
 
 class BOT:
-    def __init__(self):
+    def __init__(self, db: DB, downloader : Downloader, qmanager : QuizManager):
+
+        self.db_obj = db
+        self.downloader = downloader
+        self.quiz_manager = qmanager
+
         self.inline_searchers = {}
         self.inline_lock = threading.Lock()
 
+        self.queue_lock = threading.Lock()
+        self.queue = list()
+
+        #INLINE FUNCTIONS#
+    #SOLO inline_search DEVE ESSERE CHIAMATA#
     def register_new_search(self, user_id):
         new_event = threading.Event()
 
@@ -175,7 +142,7 @@ class BOT:
         lock_event = self.register_new_search(user_id)
 
         try:                    
-            found = await asyncio.to_thread(db.search_by_name_async, lock_event, query)
+            found = await asyncio.to_thread(self.db_obj.search_by_name_async, lock_event, query)
         finally:
             still_valid = self.end_remove(user_id, lock_event)
         
@@ -199,7 +166,105 @@ class BOT:
 
         await context.bot.answer_inline_query(update.inline_query.id, results)
 
-bot = BOT()
+    #FUNZIONE HELPER DA NON USARE
+    def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue : Queue):
+
+        try:
+            choices = self.db_obj.random_pick(diff, n_songs, only_OP=only_OP)
+            choices_info, paths, persistant = self.downloader.download_media_list(self.db_obj.get_db(),choices, disc_persistant)
+
+            for sample, song_info in extract_sample_list(paths, choices_info, persistant):
+                queue.put((sample,song_info))
+        except Exception as e:
+            queue.put(e)
+        finally:
+            queue.put(None)
+
+    #FUNZIONE DI INIZIALIZZAZIONE PIPELINE CHE RITORNA LA CODA DA CUI ESTRARRE I DATI
+    def start_quiz_pipeline(self, diff, n_songs, only_OP=True, disc_persistant=False):
+        queue = Queue(maxsize=2)
+        threading.Thread(
+            target=self._zero2sample,
+            args=(diff, n_songs, only_OP, disc_persistant, queue),
+            daemon=True
+        ).start()
+        return queue
+
+    #FUNZIONE GET DELLA CODA PER CONSUMARE IL PROSSIMO ITEM
+    async def get_next_sample(self, queue:Queue):
+        res = await asyncio.to_thread(queue.get)
+        if isinstance(res, Exception):
+            raise res
+        return res
+
+
+    #FUNZIONI HANDLER
+
+    async def quiz(self, update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
+        added = await self.quiz_manager.add_chat(chat_id)
+
+        if not added:
+            await context.bot.send_message(chat_id=chat_id, text="Quiz ancora in corso.\nDigita /end_quiz per annullarlo")
+            return
+
+        keyboard = [
+            [InlineKeyboardButton("Join", callback_data="join_quiz")],
+            [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
+            [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
+        ]
+        await context.bot.send_message(
+            chat_id=chat_id, text="Eccoci al quizzettone pazzo, pronti?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def join_quiz(self, update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        chat_id = update.effective_chat.id
+        user = update.effective_user
+        user_tag = f"@{user.username}" if user.username else f"{user.first_name}[{user.id}]"
+
+        added = await self.quiz_manager.add_member(chat_id, user_tag)
+
+        if added:
+            members = self.quiz_manager.get_members(chat_id)
+            text = "Eccoci al quizzettone pazzo, pronti?\n\nPartecipanti:\n" + '\n'.join(members)
+            keyboard = [
+                [InlineKeyboardButton("Join", callback_data="join_quiz")],
+                [InlineKeyboardButton("Inizia", callback_data="start_quiz")],
+                [InlineKeyboardButton("Annulla", callback_data="end_quiz")],
+            ]
+            await query.answer()
+            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.answer(text="Sei già dentro caro", show_alert=True)
+
+    async def start_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text(text="E mo si inizia")
+
+    async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.delete_message()
+        elif update.message:
+            await update.message.reply_text("Quiz Annullato!")
+        await self.quiz_manager.remove_chat(update.effective_chat.id)
+
+    async def catch_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if current_song.AwaitingAnswer:
+            answer = update.message.text
+            if answer.lower() == current_song.animeENName.lower() or answer.lower() == current_song.animeJPName.lower():
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta corretta!")
+                current_song.got_answer()
+            else:
+                await context.bot.send_message(chat_id=update.effective_chat.id, text="Risposta sbagliata!")
+        else:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="Non c'è nessuna domanda in corso. Digita /quiz per iniziare un nuovo quiz.")
+
+    
+bot = BOT(db, downloader= Downloader(), qmanager= QuizManager())
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
@@ -213,15 +278,15 @@ if __name__ == '__main__':
     inline_search_handler = InlineQueryHandler(bot.inline_search)
     application.add_handler(inline_search_handler)
 
-    quiz_handler = CommandHandler("quiz", quiz)
+    quiz_handler = CommandHandler("quiz", bot.quiz)
     application.add_handler(quiz_handler)
 
-    end_quiz_handler = CommandHandler("end_quiz", end_quiz)
+    end_quiz_handler = CommandHandler("end_quiz", bot.end_quiz)
     application.add_handler(end_quiz_handler)
 
-    callback_handlers= [CallbackQueryHandler(join_quiz, pattern="^" + 'join_quiz' + "$"),
-                        CallbackQueryHandler(start_quiz, pattern="^" + 'start_quiz' + "$"),
-                        CallbackQueryHandler(end_quiz, pattern="^" + 'end_quiz' + "$")]
+    callback_handlers= [CallbackQueryHandler(bot.join_quiz, pattern="^" + 'join_quiz' + "$"),
+                        CallbackQueryHandler(bot.start_quiz, pattern="^" + 'start_quiz' + "$"),
+                        CallbackQueryHandler(bot.end_quiz, pattern="^" + 'end_quiz' + "$")]
 
     for handler in callback_handlers: application.add_handler(handler)
 

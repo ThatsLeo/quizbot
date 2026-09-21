@@ -211,9 +211,10 @@ def is_sample(path):
     return "sample" in path
 
 
-def extract_sample_list(path_list: list[tuple], disc_persistant, duration=15):
+def extract_sample_list(path_list: list[tuple], choice_list, disc_persistant, duration=15):
     from scraper import get_samplepath
-    for mp3, mp4 in path_list:
+    keys = list(choice_list.keys())
+    for i, (mp3, mp4) in enumerate(path_list):
         out = []
         best_start_sec = None
 
@@ -236,4 +237,4 @@ def extract_sample_list(path_list: list[tuple], disc_persistant, duration=15):
             Path(mp3).unlink(missing_ok=True)
             Path(mp4).unlink(missing_ok=True)
 
-        yield tuple(out)
+        yield tuple((out,choice_list[keys[i]]))
