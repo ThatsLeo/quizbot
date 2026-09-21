@@ -1,7 +1,7 @@
 # pyright: reportMissingImports=false
 import logging, json, random
 from os import listdir
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo, InputMediaAudio
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, ConversationHandler, CallbackQueryHandler,  filters
 from uuid import uuid4
 from scraper import Downloader, DB
@@ -55,6 +55,7 @@ class QuizManager:
                     'quiz': 'ASKING',
                     'current_song': None,
                     'sample_queue': None,
+                    'quiz_msg_id': None,
                     'config': {
                         'diff_range': [0, 100],
                         'n_songs': None,
@@ -132,7 +133,36 @@ class QuizManager:
         async with lock:
             return self.active_chats[chat_id]['sample_queue']
 
-    
+    #FUNZIONE GET DELLA CODA PER CONSUMARE IL PROSSIMO ITEM
+    async def get_next_sample(self, queue:Queue):
+        res = await asyncio.to_thread(queue.get)
+        if isinstance(res, Exception):
+            raise res
+        return res
+
+    async def get_quiz_msg(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]["quiz_msg_id"] 
+
+    async def set_quiz_msg(self, chat_id, msg_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if self.active_chats[chat_id]["quiz_msg_id"] is None:
+                self.active_chats[chat_id]["quiz_msg_id"] = msg_id
+                return True
+            return False
+       
+    #Scrive la prossima canzone estratta nella coda direttamente nella struttura della sessione.
+    #Ritorna True se la prossima canzone esiste, false se la coda è finita.
+    async def next_song(self, chat_id):
+        #Viene estratta la coda relativa alla propria sessione e viene estratta la canzone dalla coda.
+        queue = await self.get_sample_queue(chat_id)
+        song = await self.get_next_sample(queue)
+        if song is not None:
+            await self.set_current_song(chat_id, song)
+            return True
+        return False
 
 quiz_manager = QuizManager()
 
@@ -230,14 +260,6 @@ class BOT:
         ).start()
         return queue
 
-    #FUNZIONE GET DELLA CODA PER CONSUMARE IL PROSSIMO ITEM
-    async def get_next_sample(self, queue:Queue):
-        res = await asyncio.to_thread(queue.get)
-        if isinstance(res, Exception):
-            raise res
-        return res
-
-
     #FUNZIONI HANDLER
 
     async def quiz(self, update, context: ContextTypes.DEFAULT_TYPE):
@@ -282,18 +304,19 @@ class BOT:
         else:
             await query.answer(text="Sei già dentro caro", show_alert=True)
 
+    #Ritorna True quando finisce di scaricare e setta la coda nella struttura.
     async def start_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         chat_id = update.effective_chat.id
         if not self.quiz_manager.get_members(chat_id):
             await query.answer(text="Nessun membro registrato nel quizzettone pazzo", show_alert=True)
-            return
+            return False
 
         #prende un lock e controlla lo stato del quiz, se lo stato è ASKING e quindi nessuna funzione
         #di download è stata ancora chiamata allora cambia lo stato e procede a creare la pipeline di download.
         if not await self.quiz_manager.try_quiz(chat_id):
             await query.answer(text="Hai già cliccato il pulsante brutta testa di cazzo", show_alert=True)
-            return 
+            return False
 
         #manda un messaggio di intermezzo per segnalare la preparazione.
         await query.answer()
@@ -302,7 +325,8 @@ class BOT:
         try: 
             #inizia il download restituendo la coda, la coda viene immediatamente scritta nello stato della sessione
             queue = self.start_quiz_pipeline(diff=[80,100], n_songs=1, only_OP=True)
-            self.quiz_manager.set_sample_queue(chat_id)
+            await self.quiz_manager.set_sample_queue(chat_id, queue)
+            isSong = await self.quiz_manager.next_song(chat_id)
 
         finally:
             task_anim.cancel()
@@ -310,16 +334,62 @@ class BOT:
 
         await query.delete_message()
 
-        #questa deve essere spostata nella funzione che si occuperà di generare il messaggio finale relativo alla canzone.
-        #Viene estratta la coda relativa alla propria sessione e viene estratta la canzone dalla coda.
-        queue = self.quiz_manager.get_sample_queue(chat_id)
-        song = await self.get_next_sample(queue)
-        with open(f"{song['media_generic_path']}" + '_sample.mp4', "rb") as f:
-            await context.bot.send_video(update.effective_chat.id, f, supports_streaming=True, write_timeout=60, read_timeout=60)
+        if isSong:
+            await self.post_song(chat_id, context)
+        else:
+            await context.bot.send_message(chat_id, "Errore nel caricamento.")
+            await self.quiz_manager.remove_chat(chat_id)
 
-        with open(f"{song['media_generic_path']}" + '_sample.mp3', "rb") as f:
-            await context.bot.send_audio(update.effective_chat.id, f, write_timeout=60, read_timeout=60)
-               #await query.edit_message_text(text=f"{song}")
+    #Prende la canzone in struttura e la posta in chat.
+    async def post_song(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
+
+        msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+
+        song = await self.quiz_manager.get_current_song(chat_id)
+
+        keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton( " ▶️ ", callback_data="next_one")]
+                ])
+
+        audio_path = f"{song['media_generic_path']}_sample.mp3"
+        if msg_id is None:
+            with open(audio_path, "rb") as f:
+                msg = await context.bot.send_audio(
+                    chat_id, 
+                    f, 
+                    write_timeout=60, 
+                    read_timeout=60, 
+                    reply_markup=keyboard)
+                
+            await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
+
+        else:
+            with open(audio_path, "rb") as f:
+                await context.bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    media=InputMediaAudio(media=f),
+                    reply_markup=keyboard
+                )
+
+
+    async def next_one_handler(self, update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        chat_id = update.effective_chat.id
+
+        await query.answer()
+
+        isSong = await self.quiz_manager.next_song(chat_id)
+
+        if isSong:
+            await self.post_song(chat_id, context)
+        else:
+            msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+    
+            await context.bot.delete_message(chat_id, msg_id)
+            await context.bot.send_message(chat_id, "Quiz terminato!")
+            await self.quiz_manager.remove_chat(chat_id)
+
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:
@@ -363,7 +433,8 @@ if __name__ == '__main__':
 
     callback_handlers= [CallbackQueryHandler(bot.join_quiz, pattern="^" + 'join_quiz' + "$"),
                         CallbackQueryHandler(bot.start_quiz, pattern="^" + 'start_quiz' + "$"),
-                        CallbackQueryHandler(bot.end_quiz, pattern="^" + 'end_quiz' + "$")]
+                        CallbackQueryHandler(bot.end_quiz, pattern="^" + 'end_quiz' + "$"),
+                        CallbackQueryHandler(bot.next_one_handler, pattern="^" + "next_one" + "$")]
 
     for handler in callback_handlers: application.add_handler(handler)
 
