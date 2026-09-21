@@ -45,12 +45,44 @@ class QuizManager:
     async def add_chat(self, chat_id):
         lock = self.get_lock(chat_id)
 
+        #dentro quiz possono trovarsi:
+        #ASKING ovvero stato iniziale in attesa
+        #PREPARING ovvero random_pick con download
         async with lock:
             if not chat_id in self.active_chats:
-                self.active_chats[chat_id] = {'members' : set(),
-                                  'quiz': ''}
+                self.active_chats[chat_id] = {
+                    'members': set(),
+                    'quiz': 'ASKING',
+                    'current_song': None,
+                    'sample_queue': None,
+                    'config': {
+                        'diff_range': [0, 100],
+                        'n_songs': None,
+                        'only_OP': True,
+                        'disc_persistant': False,
+                    },
+                }
                 return True
             return False
+
+    async def try_quiz(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if self.active_chats[chat_id]["quiz"] == "ASKING":
+                self.active_chats[chat_id]["quiz"] = "PREPARING"
+                return True
+            return False
+
+    async def spinloading(self, query):
+        frames = ["", ".", "..", "..."]
+        i = 0
+        try:
+            while True:
+                await query.edit_message_text(text=f"Sto preparando le canzoni{frames[i % len(frames)]}")
+                i += 1
+                await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            pass 
 
     async def add_member(self, chat_id, user_tag):
         lock = self.get_lock(chat_id)
@@ -91,7 +123,10 @@ class QuizManager:
     async def set_sample_queue(self, chat_id, queue):
         lock = self.get_lock(chat_id)
         async with lock:
-            self.active_chats[chat_id]['sample_queue'] = queue
+            if self.active_chats[chat_id]["sample_queue"] is None:
+                self.active_chats[chat_id]["sample_queue"] = queue
+                return True
+        return False
 
     async def get_sample_queue(self, chat_id):
         lock = self.get_lock(chat_id)
@@ -113,7 +148,9 @@ class BOT:
         self.inline_searchers = {}
         self.inline_lock = threading.Lock()
 
+        #non so se mi serve
         self.queue_lock = threading.Lock()
+
 
         #INLINE FUNCTIONS#
     #SOLO inline_search DEVE ESSERE CHIAMATA#
@@ -247,14 +284,33 @@ class BOT:
 
     async def start_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
+        chat_id = update.effective_chat.id
+        if not self.quiz_manager.get_members(chat_id):
+            await query.answer(text="Nessun membro registrato nel quizzettone pazzo", show_alert=True)
+            return
 
-        queue = self.start_quiz_pipeline([70,100], 1, True)
-        song = await self.get_next_sample(queue)
-
+        if not await self.quiz_manager.try_quiz(chat_id):
+            await query.answer(text="Hai già cliccato il pulsante brutta testa di cazzo", show_alert=True)
+            return 
+        
         await query.answer()
-        with open(f"{song["media_generic_path"]}" + "_sample.mp4", "rb") as f:
+        task_anim = asyncio.create_task(self.quiz_manager.spinloading(query))
+
+        try:      
+            queue = self.start_quiz_pipeline(diff=[80,100], n_songs=1, only_OP=True)
+            song = await self.get_next_sample(queue)
+        finally:
+            task_anim.cancel()
+            await asyncio.gather(task_anim, return_exceptions=True)
+
+        await query.delete_message()
+
+        with open(f"{song['media_generic_path']}" + '_sample.mp4', "rb") as f:
             await context.bot.send_video(update.effective_chat.id, f, supports_streaming=True, write_timeout=60, read_timeout=60)
-        #await query.edit_message_text(text=f"{song}")
+
+        with open(f"{song['media_generic_path']}" + '_sample.mp3', "rb") as f:
+            await context.bot.send_audio(update.effective_chat.id, f, write_timeout=60, read_timeout=60)
+               #await query.edit_message_text(text=f"{song}")
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:
