@@ -58,8 +58,7 @@ class QuizManager:
                     'config': {
                         'diff_range': [0, 100],
                         'n_songs': None,
-                        'only_OP': True,
-                        'disc_persistant': False,
+                        'only_OP': True
                     },
                 }
                 return True
@@ -133,6 +132,7 @@ class QuizManager:
         async with lock:
             return self.active_chats[chat_id]['sample_queue']
 
+    
 
 quiz_manager = QuizManager()
 
@@ -289,22 +289,31 @@ class BOT:
             await query.answer(text="Nessun membro registrato nel quizzettone pazzo", show_alert=True)
             return
 
+        #prende un lock e controlla lo stato del quiz, se lo stato è ASKING e quindi nessuna funzione
+        #di download è stata ancora chiamata allora cambia lo stato e procede a creare la pipeline di download.
         if not await self.quiz_manager.try_quiz(chat_id):
             await query.answer(text="Hai già cliccato il pulsante brutta testa di cazzo", show_alert=True)
             return 
-        
+
+        #manda un messaggio di intermezzo per segnalare la preparazione.
         await query.answer()
         task_anim = asyncio.create_task(self.quiz_manager.spinloading(query))
 
-        try:      
+        try: 
+            #inizia il download restituendo la coda, la coda viene immediatamente scritta nello stato della sessione
             queue = self.start_quiz_pipeline(diff=[80,100], n_songs=1, only_OP=True)
-            song = await self.get_next_sample(queue)
+            self.quiz_manager.set_sample_queue(chat_id)
+
         finally:
             task_anim.cancel()
             await asyncio.gather(task_anim, return_exceptions=True)
 
         await query.delete_message()
 
+        #questa deve essere spostata nella funzione che si occuperà di generare il messaggio finale relativo alla canzone.
+        #Viene estratta la coda relativa alla propria sessione e viene estratta la canzone dalla coda.
+        queue = self.quiz_manager.get_sample_queue(chat_id)
+        song = await self.get_next_sample(queue)
         with open(f"{song['media_generic_path']}" + '_sample.mp4', "rb") as f:
             await context.bot.send_video(update.effective_chat.id, f, supports_streaming=True, write_timeout=60, read_timeout=60)
 
