@@ -110,7 +110,6 @@ class BOT:
         self.inline_lock = threading.Lock()
 
         self.queue_lock = threading.Lock()
-        self.queue = list()
 
         #INLINE FUNCTIONS#
     #SOLO inline_search DEVE ESSERE CHIAMATA#
