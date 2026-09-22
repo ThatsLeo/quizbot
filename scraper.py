@@ -7,7 +7,6 @@ from pathlib import Path
 import threading
 
 
-
 ANI_URL = "https://graphql.anilist.co"
 THEME_URL = "https://anisongdb.com/api/mal_ids_request"
 DOWNLOAD_URL = "https://naedist.animemusicquiz.com"
@@ -18,12 +17,10 @@ difficulties = {'Facile' : [70,100],
               'Impossibile' : [0,10],
               'Fritto misto' : [0,100]}
 
-#json query verso anilist
-#ritorna un {False: errore} in caso di errore
-#ritorna un json in caso di successo
-#Ogni numero "page" carica una lista di 20 item.
 #Yield function da usare in un loop, es: for data in ani_query(...):
 def ani_query(page_start=1, page_end=None, type="ANIME", format="TV", ANI_URL = ANI_URL):
+    """ JSON query verso anilist. Ogni numero "page" carica una lista di 20 item. 
+    Ritorna un {False: errore} in caso di errore, JSON in caso di successo """
 
     query = """
         query($page:Int = 1, $type:MediaType, $format:[MediaFormat], 
@@ -83,12 +80,12 @@ def ani_query(page_start=1, page_end=None, type="ANIME", format="TV", ANI_URL = 
         page += 1
         time.sleep(0.5)
 
-#la funzione deve essere chiamata con una lista di id, se è solo uno allora [id]
+#La funzione deve essere chiamata con una lista di id, se è solo uno allora [id]
 def cerca_anisongdb(mal_ids, filters = None, url = THEME_URL):
 
     
     body = {
-        "mal_ids": mal_ids,  # lista di interi, es. [154587] o più insieme
+        "mal_ids": mal_ids,  # Lista di interi, es. [154587] o più insieme
         "ignore_duplicate": False,
         "filters": filters or {
             "song_types": ["opening", "ending", "insert"],
@@ -101,25 +98,22 @@ def cerca_anisongdb(mal_ids, filters = None, url = THEME_URL):
     try:
         response = requests.post(url, json=body)
         response.raise_for_status()
-    except Exception as err:
+    except Exception as e:
         return None
     
     risultati = response.json()
     return risultati
 
-#aggiunge una entry nel db.
+
 def add_entry(entry, path):
+    '''Aggiunge una entry nel db.'''
     with open(path, "a", encoding="utf-8") as f:
         riga = json.dumps(entry, ensure_ascii=False)
         f.write(riga + "\n")
 
-#god function che prende una pagina start e una target, scarica tutte le pagine di mezzo
-#e le scrive nel db.
-#Page_end è COMPRESA nelle pagine scaricate.
-#Se page_end è None la funzione continua fin quando trova pagine da anilist.
-#sleep attende secondi per evitare timeout dai server.
-def popolate(page_start, page_end, path, sleep=None):
 
+def popolate(page_start, page_end, path, sleep=None):
+    '''Popola il DB con le informazioni contenute nelle pagine'''
     for data in ani_query(page_start, page_end):
         if False in data:
             print("Errore:", data[False])
@@ -183,10 +177,11 @@ def popolate(page_start, page_end, path, sleep=None):
     deduplicate_db(path)
     no_video_cleaner(path)
 
-def deduplicate_db(percorso):
+def deduplicate_db(path):
+    '''Rimuove i record duplicati dal DB'''
     seen = {}
     
-    with open(percorso, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for row in f:
             row = row.strip()
             if row:
@@ -194,7 +189,7 @@ def deduplicate_db(percorso):
                 mal_id = obj["entry"]["mal_id"]
                 seen[mal_id] = obj
     
-    with open(percorso, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         for obj in seen.values():
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
@@ -244,8 +239,9 @@ class DB:
     def __init__(self, path):
         self.db = self.load_db(path)
 
-    #carica il db e lo restituisce come file.
+    
     def load_db(self, path):
+        '''Carica il db e lo restituisce come file.'''
         with open(path, "r", encoding="utf-8") as f:
             return [json.loads(riga) for riga in f if riga.strip()]
 
@@ -256,7 +252,9 @@ class DB:
             return True
         return False
 
-    def search_by_name(self,query: str):
+    def search_by_name(self, query: str):
+        '''Cerca nel DB tutti le entry il cui titolo EN o JP contengano la query passata
+        Ritorna la lista di queste entry'''
         query = query.lower()
         res = []
 
@@ -266,13 +264,13 @@ class DB:
             nameEN = entry["nameEN"]
             nameJP = entry["nameJP"]
 
-            if self._is_in_(query,nameEN) or self._is_in_(query, nameJP):
+            if self._is_in_(query, nameEN) or self._is_in_(query, nameJP):
                 res.append(entry) 
         return res
 
-    #funzione pensata per le implementazioni real-time con un controllo periodico di un evento.
+    #Funzione pensata per le implementazioni real-time con un controllo periodico di un evento.
     #La funzione è pensata per essere eseguita in un thread parallelo, se il flag si avvera allora ferma la ricerca.
-    def search_by_name_async(self, event_flag:threading.Event, query:str):
+    def search_by_name_async(self, event_flag: threading.Event, query: str) :
         query = query.lower()
         res = []
 
@@ -295,10 +293,15 @@ class DB:
         return res
 
 
+<<<<<<< HEAD
     # difficoltà corrisponde a quella nel db
     def random_pick(self, diff, n_extractions, only_OP=True):
         assert diff in difficulties
         diff_range = difficulties[diff]
+=======
+    
+    def random_pick(self, diff_range, n_extractions, only_OP = True):
+>>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
 
         all_choices = dict()
         pool_piatto = []  # lista di (indice_entry, song_type, song_id)
@@ -307,9 +310,9 @@ class DB:
             entry = complete_entry['entry']
 
             SONGS = entry["Openings"]
-            if not only_OP:
-                SONGS = SONGS | entry["Endings"]
+            if not only_OP: SONGS = SONGS | entry["Endings"] # Merge con le ending
             for song_type, opening in SONGS.items():
+<<<<<<< HEAD
                 diff = opening["difficulty"]
                 song_name = opening["song"]
                 song_artist = opening["song_artist"]
@@ -333,6 +336,18 @@ class DB:
 
             if len(song_artist_seen) >= n_extractions:
                 break
+=======
+
+                diff = opening["difficulty"] # Difficoltà corrisponde a quella nel db
+
+                if diff and diff <= diff_range[1] and diff >= diff_range[0]:
+                    if i in all_choices: all_choices[i]['type'].append(song_type)
+                    else:
+                        all_choices[i] = {'type' : [song_type], 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
+
+        if n_extractions > len(all_choices) : n_extractions = len(all_choices)
+        choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
+>>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
         return choices
 
     def get_db(self):
@@ -350,7 +365,7 @@ class Downloader:
     #La funzione ora si aspetta una copia completa in RAM del DB.
     def download_media_list(self, db_load, choices_list:dict, disc_persistant = False):
 
-        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # sort per index
+        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # Sort per index
         paths = []
 
         for index, complete_entry in enumerate(db_load):
@@ -361,7 +376,7 @@ class Downloader:
                     if "Opening" in target: SONG = entry["Openings"][target]
                     elif "Ending" in target: SONG = entry["Endings"][target]
 
-                    #video/audio download sincrono        
+                    #Video/audio download sincrono        
                     media_list = []
                     media_path = clean_path(Path(f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"))
                     for format, type in (("mp3", "audio"), ("mp4", "video")):
@@ -380,11 +395,10 @@ class Downloader:
         return choices_list, paths, disc_persistant
 
 
-    #il parametro forced forza la riscrittura del file nonostante sia già presente.
-    #Pensata per gestire download concorrenti sullo stesso file.
-    #Se due thread provano a scaricare lo stesso file, il primo che arriva prende il lock e mette in attesa
-    #tutti gli altri fino al completamento.
+    #Il parametro forced forza la riscrittura del file nonostante sia già presente.
     def download_file_sync(self, url, dest_path, forced=False):
+        """Scarica un file in modo sincrono e thread-safe: evita download concorrenti dello stesso file 
+        mettendo in attesa i thread successivi fino al completamento del primo downloader."""
 
         output_file = Path(dest_path)
         chiave = str(output_file)
@@ -414,12 +428,15 @@ class Downloader:
 
         return risultato
 
-    #funzione esecutiva del vero download, viene chiamata unicamente dopo tutti i controlli.
     def _esegui_download(self, url, output_file):
+<<<<<<< HEAD
 
         # pulizia del nome file per evitare problemi su windows:
         output_file = clean_path(output_file)
 
+=======
+        '''Funzione esecutiva del vero download, viene chiamata unicamente dopo tutti i controlli.'''
+>>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
         output_file.parent.mkdir(exist_ok=True, parents=True)
         percorso_temp = output_file.with_suffix(output_file.suffix + ".part")
         try:

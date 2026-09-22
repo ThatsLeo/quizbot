@@ -1,5 +1,10 @@
 downloads/
+<<<<<<< HEAD
 tester.py
 __pycache__/
 .vscode
 test.py
+=======
+test.py
+__pycache__/
+>>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
