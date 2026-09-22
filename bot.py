@@ -7,7 +7,6 @@ from uuid import uuid4
 from scraper import Downloader, DB
 import asyncio
 import threading
-from song_handler import generate_quiz
 from canvas import extract_sample_list
 from queue import Queue
 
@@ -16,7 +15,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-
+logging.getLogger("httpx").setLevel(logging.WARNING)
 class Song:
     def __init__(self):
         self.id = None
@@ -37,6 +36,7 @@ class QuizManager:
         self.active_chats = dict()
         self.active_chats_lock = {}
 
+
     def get_lock(self, chat_id):
         if chat_id not in self.active_chats_lock:
             self.active_chats_lock[chat_id] = asyncio.Lock()
@@ -55,7 +55,9 @@ class QuizManager:
                     'quiz': 'ASKING',
                     'current_song': None,
                     'sample_queue': None,
+                    'advancing' : False,
                     'quiz_msg_id': None,
+                    'stop_event' : threading.Event(),
                     'config': {
                         'diff_range': [0, 100],
                         'n_songs': None,
@@ -64,6 +66,20 @@ class QuizManager:
                 }
                 return True
             return False
+
+    async def try_advance(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if self.active_chats[chat_id].get('advancing', False):
+                return False
+            self.active_chats[chat_id]['advancing'] = True
+            return True
+
+    async def done_advancing(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if chat_id in self.active_chats:
+                self.active_chats[chat_id]['advancing'] = False
 
     async def try_quiz(self, chat_id):
         lock = self.get_lock(chat_id)
@@ -152,7 +168,15 @@ class QuizManager:
                 self.active_chats[chat_id]["quiz_msg_id"] = msg_id
                 return True
             return False
-       
+
+    async def get_stop_event(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if chat_id in self.active_chats:
+                return self.active_chats[chat_id]['stop_event']
+            return None
+
+        
     #Scrive la prossima canzone estratta nella coda direttamente nella struttura della sessione.
     #Ritorna True se la prossima canzone esiste, false se la coda è finita.
     async def next_song(self, chat_id):
@@ -237,13 +261,15 @@ class BOT:
         await context.bot.answer_inline_query(update.inline_query.id, results)
 
     #FUNZIONE HELPER DA NON USARE
-    def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue : Queue):
+    def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue : Queue, stop_event:threading.Event):
 
         try:
             choices = self.db_obj.random_pick(diff, n_songs, only_OP=only_OP)
             choices_info, paths, persistant = self.downloader.download_media_list(self.db_obj.get_db(),choices, disc_persistant)
 
             for song_info in extract_sample_list(paths, choices_info, persistant):
+                if stop_event.is_set():
+                    return
                 queue.put(song_info)
         except Exception as e:
             queue.put(e)
@@ -251,11 +277,11 @@ class BOT:
             queue.put(None)
 
     #FUNZIONE DI INIZIALIZZAZIONE PIPELINE CHE RITORNA LA CODA DA CUI ESTRARRE I DATI
-    def start_quiz_pipeline(self, diff, n_songs, only_OP=True, disc_persistant=False):
+    def start_quiz_pipeline(self, diff, n_songs, stop_event: threading.Event, only_OP=True, disc_persistant=False):
         queue = Queue(maxsize=2)
         threading.Thread(
             target=self._zero2sample,
-            args=(diff, n_songs, only_OP, disc_persistant, queue),
+            args=(diff, n_songs, only_OP, disc_persistant, queue, stop_event),
             daemon=True
         ).start()
         return queue
@@ -324,7 +350,8 @@ class BOT:
 
         try: 
             #inizia il download restituendo la coda, la coda viene immediatamente scritta nello stato della sessione
-            queue = self.start_quiz_pipeline(diff=[80,100], n_songs=1, only_OP=True)
+            stop_event = await self.quiz_manager.get_stop_event(chat_id)
+            queue = self.start_quiz_pipeline(diff=[50,100], n_songs=4, stop_event=stop_event, only_OP=True)
             await self.quiz_manager.set_sample_queue(chat_id, queue)
             isSong = await self.quiz_manager.next_song(chat_id)
 
@@ -369,7 +396,9 @@ class BOT:
                     chat_id=chat_id,
                     message_id=msg_id,
                     media=InputMediaAudio(media=f),
-                    reply_markup=keyboard
+                    reply_markup=keyboard,
+                    write_timeout=60,
+                    read_timeout=60
                 )
 
 
@@ -379,17 +408,21 @@ class BOT:
 
         await query.answer()
 
-        isSong = await self.quiz_manager.next_song(chat_id)
+        if not await self.quiz_manager.try_advance(chat_id):
+            return
 
-        if isSong:
-            await self.post_song(chat_id, context)
-        else:
-            msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
-    
-            await context.bot.delete_message(chat_id, msg_id)
-            await context.bot.send_message(chat_id, "Quiz terminato!")
-            await self.quiz_manager.remove_chat(chat_id)
-
+        try:
+            isSong = await self.quiz_manager.next_song(chat_id)
+            if isSong:
+                await self.post_song(chat_id, context)
+            else:
+                msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+        
+                await context.bot.delete_message(chat_id, msg_id)
+                await context.bot.send_message(chat_id, "Quiz terminato!")
+                await self.quiz_manager.remove_chat(chat_id)
+        finally:
+            await self.quiz_manager.done_advancing(chat_id)
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:
@@ -397,7 +430,20 @@ class BOT:
             await update.callback_query.delete_message()
         elif update.message:
             await update.message.reply_text("Quiz Annullato!")
-        await self.quiz_manager.remove_chat(update.effective_chat.id)
+
+        chat_id = update.effective_chat.id
+
+        try: 
+            stop_event = await self.quiz_manager.get_stop_event(chat_id)
+            if stop_event:
+                stop_event.set()
+        except:
+            pass
+
+        msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+        if msg_id:
+            await context.bot.delete_message(chat_id, msg_id)
+        await self.quiz_manager.remove_chat(chat_id)
 
     async def catch_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if current_song.AwaitingAnswer:

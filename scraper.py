@@ -251,26 +251,32 @@ class DB:
 
 
     # difficoltà corrisponde a quella nel db
-    def random_pick(self, diff_range, n_extractions, only_OP = True):
-
+    def random_pick(self, diff_range, n_extractions, only_OP=True):
         all_choices = dict()
+        pool_piatto = []  # lista di (indice_entry, song_type)
 
         for i, complete_entry in enumerate(self.db):
             entry = complete_entry['entry']
 
             SONGS = entry["Openings"]
-            if not only_OP: SONGS = SONGS | entry["Endings"] # faccio un merge con le ending
+            if not only_OP:
+                SONGS = SONGS | entry["Endings"]
             for song_type, opening in SONGS.items():
-
                 diff = opening["difficulty"]
+                if diff and diff_range[0] <= diff <= diff_range[1]:
+                    pool_piatto.append((i, song_type))
+                    if i not in all_choices:
+                        all_choices[i] = {'type': [], 'anime_name': entry['nameEN'], 'anime_id': entry['mal_id']}
 
-                if diff and diff <= diff_range[1] and diff >= diff_range[0]:
-                    if i in all_choices: all_choices[i]['type'].append(song_type)
-                    else:
-                        all_choices[i] = {'type' : [song_type], 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
+        n_estratti = min(n_extractions, len(pool_piatto))
+        scelte_piatte = random.sample(pool_piatto, k=n_estratti)
 
-        if n_extractions > len(all_choices) : n_extractions = len(all_choices)
-        choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
+        choices = {}
+        for i, song_type in scelte_piatte:
+            if i not in choices:
+                choices[i] = {'type': [], 'anime_name': all_choices[i]['anime_name'], 'anime_id': all_choices[i]['anime_id']}
+            choices[i]['type'].append(song_type)
+
         return choices
 
     def get_db(self):
@@ -313,7 +319,7 @@ class Downloader:
 
                     paths.append(tuple(media_list)) 
                     choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"
-
+        print(choices_list)
         return choices_list, paths, disc_persistant
 
 
