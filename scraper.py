@@ -243,7 +243,8 @@ class DB:
             nameJP = entry["nameJP"]
 
             if self._is_in_(query,nameEN) or self._is_in_(query, nameJP):
-                res.append(entry) 
+                res.append(entry)
+            if len(res) > 15: break #max 15 risultati
 
         if event_flag.is_set():
             return None

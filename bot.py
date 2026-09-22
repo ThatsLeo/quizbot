@@ -1,6 +1,5 @@
 # pyright: reportMissingImports=false
 import logging, json, random
-from os import listdir
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo, InputMediaAudio
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, MessageHandler, ConversationHandler, CallbackQueryHandler,  filters
 from uuid import uuid4
@@ -125,6 +124,9 @@ class QuizManager:
 
     def get_members(self, chat_id):
         return self.active_chats[chat_id]['members']
+    
+    def check_member_participation(self, user_tag):
+        return any(user_tag in chat_datas['members'] for chat_datas in self.active_chats.values())
 
     async def set_current_song(self, chat_id, song):
         lock = self.get_lock(chat_id)
@@ -231,34 +233,44 @@ class BOT:
         query = update.inline_query.query
         if not query:
             return
-
-        user_id = update.effective_user.id
+        user = update.effective_user
+        user_id = user.id
+        user_tag = f"@{user.username}" if user.username else f"{user.first_name}[{user.id}]"
         lock_event = self.register_new_search(user_id)
 
-        try:                    
-            found = await asyncio.to_thread(self.db_obj.search_by_name_async, lock_event, query)
-        finally:
-            still_valid = self.end_remove(user_id, lock_event)
-        
-        if not still_valid or found is None:
-            return
+        if self.quiz_manager.check_member_participation(user_tag):
+            try:                    
+                found = await asyncio.to_thread(self.db_obj.search_by_name_async, lock_event, query)
+            finally:
+                still_valid = self.end_remove(user_id, lock_event)
+            
+            if not still_valid or not found:
+                return
 
-        results = []
-        
-        for entry in found:
-            results.append(
-                InlineQueryResultArticle(
-                    id=str(entry["mal_id"]),
-                    title=entry["nameEN"],
-                    description=entry["nameJP"],
-                    thumbnail_url=entry["coverImg"]["large"],
-                    input_message_content=InputTextMessageContent(
-                        message_text=f"Hai scelto: {entry['nameEN']}"
+            results = []
+            
+            for entry in found:
+                results.append(
+                    InlineQueryResultArticle(
+                        id=str(entry["mal_id"]),
+                        title=entry["nameEN"],
+                        description=entry["nameJP"],
+                        thumbnail_url=entry["coverImg"]["large"],
+                        input_message_content=InputTextMessageContent(
+                            message_text=f"Hai scelto: {entry['nameEN']}"
+                        )
                     )
                 )
-            )
 
-        await context.bot.answer_inline_query(update.inline_query.id, results)
+            await context.bot.answer_inline_query(update.inline_query.id, results)
+        else:
+            await context.bot.answer_inline_query(update.inline_query.id, [InlineQueryResultArticle(
+                                    id='user_not_playing',
+                                    title='Non stai giocando a nessuna partita',
+                                    input_message_content=InputTextMessageContent(
+                                        message_text="Sono un coglione ahah"
+                                    ))])
+
 
     #FUNZIONE HELPER DA NON USARE
     def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue : Queue, stop_event:threading.Event):
@@ -483,7 +495,6 @@ if __name__ == '__main__':
                         CallbackQueryHandler(bot.next_one_handler, pattern="^" + "next_one" + "$")]
 
     for handler in callback_handlers: application.add_handler(handler)
+    
 
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
