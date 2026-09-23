@@ -360,6 +360,13 @@ class Downloader:
 
     #funzione esecutiva del vero download, viene chiamata unicamente dopo tutti i controlli.
     def _esegui_download(self, url, output_file):
+
+        # pulizia del nome file per evitare problemi su windows:
+        win_blacklist = '<>:"/\\|?*'
+        blacklist_table = str.maketrans('', '', win_blacklist)
+        nome_pulito = output_file.name.translate(blacklist_table)
+        output_file = output_file.with_name(nome_pulito)
+
         output_file.parent.mkdir(exist_ok=True, parents=True)
         percorso_temp = output_file.with_suffix(output_file.suffix + ".part")
         try:

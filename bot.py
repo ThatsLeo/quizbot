@@ -1,180 +1,16 @@
-import logging, asyncio, threading
+import logging
 from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo, InputMediaAudio
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler,  CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler,  CallbackQueryHandler
 from scraper import Downloader, DB
 from canvas import extract_sample_list
 from queue import Queue
-
+from quizmanager import asyncio, threading, QuizManager, check_answer
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
-
-class QuizManager:
-    def __init__(self):
-        self.active_chats = dict()
-        self.active_chats_lock = {}
-
-    def get_lock(self, chat_id):
-        if chat_id not in self.active_chats_lock:
-            self.active_chats_lock[chat_id] = asyncio.Lock()
-        return self.active_chats_lock[chat_id]
-
-    async def add_chat(self, chat_id):
-        lock = self.get_lock(chat_id)
-
-        #dentro quiz possono trovarsi:
-        #ASKING ovvero stato iniziale in attesa
-        #PREPARING ovvero random_pick con download
-        async with lock:
-            if not chat_id in self.active_chats:
-                self.active_chats[chat_id] = {
-                    'members': set(),
-                    'quiz': 'ASKING',
-                    'current_song': None,
-                    'sample_queue': None,
-                    'advancing' : False,
-                    'quiz_msg_id': None,
-                    'stop_event' : threading.Event(),
-                    'config': {
-                        'diff_range': [0, 100],
-                        'n_songs': None,
-                        'only_OP': True
-                    },
-                }
-                return True
-            return False
-
-    async def try_advance(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if self.active_chats[chat_id].get('advancing', False):
-                return False
-            self.active_chats[chat_id]['advancing'] = True
-            return True
-
-    async def done_advancing(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if chat_id in self.active_chats:
-                self.active_chats[chat_id]['advancing'] = False
-
-    async def try_quiz(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if self.active_chats[chat_id]["quiz"] == "ASKING":
-                self.active_chats[chat_id]["quiz"] = "PREPARING"
-                return True
-            return False
-
-    async def spinloading(self, query):
-        frames = ["", ".", "..", "..."]
-        i = 0
-        try:
-            while True:
-                await query.edit_message_text(text=f"Sto preparando le canzoni{frames[i % len(frames)]}")
-                i += 1
-                await asyncio.sleep(3)
-        except asyncio.CancelledError:
-            pass 
-
-    async def add_member(self, chat_id, user):
-        lock = self.get_lock(chat_id)
-        async with lock:
-
-            if self.active_chats[chat_id]["quiz"] == "started":
-                return "started"
-
-            if not any(member.id == user.id for member in self.active_chats[chat_id]['members']):
-                self.active_chats[chat_id]['members'].add(user)
-                return True
-            return False
-        
-    async def remove_member(self, chat_id, user):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            for member in self.active_chats[chat_id]['members']:
-                if member.id == user.id:
-                    self.active_chats[chat_id]['members'].discard(member)
-
-    async def remove_chat(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if chat_id in self.active_chats:
-                self.active_chats.pop(chat_id)
-
-    def get_members(self, chat_id):
-        return self.active_chats[chat_id]['members']
-
-    def get_members_tags(self, chat_id):
-        return [f"@{user.username}" if user.username else f"{user.first_name}[{user.id}]" for user in self.get_members(chat_id)]
-    
-    def get_user_chat(self, user):
-        for chat, chat_data in self.active_chats.items():
-            if any(member.id == user.id for member in chat_data['members']):
-                return chat                 
-        return None # se non sta in nessuna chat
-    
-    async def set_current_song(self, chat_id, song):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            self.active_chats[chat_id]['current_song'] = song
-
-    def get_current_song(self, chat_id):
-        return self.active_chats[chat_id]['current_song']
-
-    async def set_sample_queue(self, chat_id, queue):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if self.active_chats[chat_id]["sample_queue"] is None:
-                self.active_chats[chat_id]["sample_queue"] = queue
-                return True
-        return False
-
-    async def get_sample_queue(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            return self.active_chats[chat_id]['sample_queue']
-
-    #FUNZIONE GET DELLA CODA PER CONSUMARE IL PROSSIMO ITEM
-    async def get_next_sample(self, queue:Queue):
-        res = await asyncio.to_thread(queue.get)
-        if isinstance(res, Exception):
-            raise res
-        return res
-
-    async def get_quiz_msg(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            return self.active_chats[chat_id]["quiz_msg_id"] 
-
-    async def set_quiz_msg(self, chat_id, msg_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if self.active_chats[chat_id]["quiz_msg_id"] is None:
-                self.active_chats[chat_id]["quiz_msg_id"] = msg_id
-                return True
-            return False
-
-    async def get_stop_event(self, chat_id):
-        lock = self.get_lock(chat_id)
-        async with lock:
-            if chat_id in self.active_chats:
-                return self.active_chats[chat_id]['stop_event']
-            return None
-
-    #Scrive la prossima canzone estratta nella coda direttamente nella struttura della sessione.
-    #Ritorna True se la prossima canzone esiste, false se la coda è finita.
-    async def next_song(self, chat_id):
-        #Viene estratta la coda relativa alla propria sessione e viene estratta la canzone dalla coda.
-        queue = await self.get_sample_queue(chat_id)
-        song = await self.get_next_sample(queue)
-        if song is not None:
-            await self.set_current_song(chat_id, song)
-            return True
-        return False
 
 class BOT:
     def __init__(self, db: DB, downloader : Downloader, qmanager : QuizManager):
@@ -218,9 +54,23 @@ class BOT:
         if not query:
             return
         user = update.effective_user
+        chat_id = self.quiz_manager.get_user_chat(user) # chat in cui sta giocando
 
-        if self.quiz_manager.get_user_chat(user):
+        if chat_id:
             lock_event = self.register_new_search(user.id)
+
+            current_song = await self.quiz_manager.get_current_song(chat_id)
+            if not current_song: # canzone non ancora caricata
+                await context.bot.answer_inline_query(update.inline_query.id, [InlineQueryResultArticle(
+                                                    id='song_loading',
+                                                    title='Aspetta, sto caricando la canzone',
+                                                    input_message_content=InputTextMessageContent(
+                                                        message_text="Mi piace un sacco il cazzo"
+                                                    ))],
+                                                    cache_time=0,
+                                                    is_personal=True)
+                return
+
             try:                    
                 found = await asyncio.to_thread(self.db_obj.search_by_name_async, lock_event, query)
             finally:
@@ -232,26 +82,31 @@ class BOT:
             results = []
             
             for entry in found:
+                right_answer = check_answer(entry['mal_id'], current_song)
+                txt = "Risposta corretta!" if right_answer else f"\"{entry['nameEN']}\" non era giusto!"
                 results.append(
                     InlineQueryResultArticle(
-                        id=str(entry["mal_id"]),
+                        id=f'answer_{entry["mal_id"]}',
                         title=entry["nameEN"],
                         description=entry["nameJP"],
                         thumbnail_url=entry["coverImg"]["large"],
                         input_message_content=InputTextMessageContent(
-                            message_text=f"Hai scelto: {entry['nameEN']}"
+                            message_text=txt
                         )
+                        
                     )
                 )
 
-            await context.bot.answer_inline_query(update.inline_query.id, results)
+            await context.bot.answer_inline_query(update.inline_query.id, results, cache_time=0, is_personal=True)
         else:
             await context.bot.answer_inline_query(update.inline_query.id, [InlineQueryResultArticle(
                                     id='user_not_playing',
                                     title='Non stai giocando a nessuna partita',
                                     input_message_content=InputTextMessageContent(
                                         message_text="Sono un coglione ahah"
-                                    ))])
+                                    ))],
+                                    cache_time=0,
+                                    is_personal=True)
 
     #FUNZIONE HELPER DA NON USARE
     def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue : Queue, stop_event:threading.Event):
@@ -362,39 +217,37 @@ class BOT:
 
         msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
 
-        song = self.quiz_manager.get_current_song(chat_id)
+        song = await self.quiz_manager.get_current_song(chat_id)
 
         keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton( " ▶️ ", callback_data="next_one")]
                 ])
+        with open(f"{song['media_generic_path']}_sample.mp3", 'rb') as f:
+            if msg_id is None:
+                msg = await context.bot.send_audio(
+                    chat_id, 
+                    f,
+                    title='Guess the song',
+                    performer='@AnimeChatz',
+                    thumbnail=self.song_img,
+                    write_timeout=60, 
+                    read_timeout=60, 
+                    reply_markup=keyboard)
+                    
+                await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
 
-        audio_path = f"{song['media_generic_path']}_sample.mp3"
-
-        if msg_id is None:
-            msg = await context.bot.send_audio(
-                chat_id, 
-                audio_path,
-                title='Guess the song',
-                performer='@AnimeChatz',
-                thumbnail=self.song_img,
-                write_timeout=60, 
-                read_timeout=60, 
-                reply_markup=keyboard)
-                
-            await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
-
-        else:
-            await context.bot.edit_message_media(
-                chat_id=chat_id,
-                message_id=msg_id,
-                media=InputMediaAudio(media=self.song_img,
+            else:
+                await context.bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    media=InputMediaAudio(media=f,
                                       title='Guess the song',
                                       performer='@AnimeChatz',
                                       thumbnail=self.song_img),
-                reply_markup=keyboard,
-                write_timeout=60,
-                read_timeout=60
-            )
+                    reply_markup=keyboard,
+                    write_timeout=60,
+                    read_timeout=60
+                )
 
     async def next_one_handler(self, update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -440,13 +293,32 @@ class BOT:
         await self.quiz_manager.remove_chat(chat_id)
 
     async def catch_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chosen_id = update.chosen_inline_result.result_id
+        chosen_id = update.chosen_inline_result.result_id[7:] # leva la parte "answer_"
         user = update.chosen_inline_result.from_user
         chat_id = self.quiz_manager.get_user_chat(user)
-        if int(chosen_id) == self.quiz_manager.get_current_song(chat_id)['anime_id']:
-            await context.bot.send_message(chat_id=chat_id, text="Risposta corretta")
-        else:
-            await context.bot.send_message(chat_id=chat_id, text="Risposta sbagliata")
+
+        current_song = await self.quiz_manager.get_current_song(chat_id)
+        right_answer = check_answer(chosen_id, current_song)
+
+        await context.bot.send_message(chat_id=chat_id, text="Risposta sbagliata")
+
+        if right_answer:
+            pass # aggiunge i punti alla leaderboard
+
+    async def react_to_inline_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        message = update.effective_message
+
+        if not message or not message.text:
+            return
+            
+        if message.via_bot and message.via_bot.id == context.bot.id: #risponde solo a messaggi inline inviati con questo bot
+            try:
+                if "Risposta corretta" in message.text:
+                    await message.set_reaction(reaction="🎉") 
+                elif "non era giusto" in message.text:
+                    await message.set_reaction(reaction="🤡")
+            except Exception as e:
+                print(f"reaction error: {e}")
 
     
 bot = BOT(db=DB("db.jsonl"), downloader= Downloader(), qmanager= QuizManager())
@@ -463,7 +335,8 @@ if __name__ == '__main__':
     inline_search_handler = InlineQueryHandler(bot.inline_search)
     application.add_handler(inline_search_handler)
 
-    application.add_handler(ChosenInlineResultHandler(bot.catch_answer))
+    application.add_handler(ChosenInlineResultHandler(bot.catch_answer, pattern="^" + 'join_quiz'))
+    application.add_handler(MessageHandler(filters.VIA_BOT, bot.react_to_inline_answer))
 
     quiz_handler = CommandHandler("quiz", bot.quiz)
     application.add_handler(quiz_handler)
