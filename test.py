@@ -1,12 +1,11 @@
 from scraper import DB, Downloader
 from canvas import extract_sample_list
-path = [
-    ('downloads/9253/Hacking to the Gate_sample.mp3', 'downloads/9253/Hacking to the Gate_sample.mp4'),
-    ('downloads/1575/COLORS_sample.mp3', 'downloads/1575/COLORS_sample.mp4'),
-    ('downloads/32937/TOMORROW_sample.mp3', 'downloads/32937/TOMORROW_sample.mp4')
-]
+import json
+from scraper import cerca_anisongdb
 
 
-#print(choices_info)
+res = cerca_anisongdb([9253])
+with open("test.json", "w", encoding="utf-8") as f:
+    f.write(json.dumps(res, indent=4))
 #print(paths)
 

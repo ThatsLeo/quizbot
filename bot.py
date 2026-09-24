@@ -216,6 +216,8 @@ class BOT:
     async def post_song(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
 
         msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+        if msg_id is not None:
+            await context.bot.delete_message(chat_id, msg_id)
 
         song = await self.quiz_manager.get_current_song(chat_id)
 
@@ -223,31 +225,19 @@ class BOT:
                 [InlineKeyboardButton( " ▶️ ", callback_data="next_one")]
                 ])
         with open(f"{song['media_generic_path']}_sample.mp3", 'rb') as f:
-            if msg_id is None:
-                msg = await context.bot.send_audio(
-                    chat_id, 
-                    f,
-                    title='Guess the song',
-                    performer='@AnimeChatz',
-                    thumbnail=self.song_img,
-                    write_timeout=60, 
-                    read_timeout=60, 
-                    reply_markup=keyboard)
-                    
-                await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
 
-            else:
-                await context.bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    media=InputMediaAudio(media=f,
-                                      title='Guess the song',
-                                      performer='@AnimeChatz',
-                                      thumbnail=self.song_img),
-                    reply_markup=keyboard,
-                    write_timeout=60,
-                    read_timeout=60
-                )
+            msg = await context.bot.send_audio(
+                chat_id, 
+                f,
+                title='Guess the song',
+                performer='@AnimeChatz',
+                thumbnail=self.song_img,
+                write_timeout=60, 
+                read_timeout=60, 
+                reply_markup=keyboard)
+                
+            await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
+
 
     async def next_one_handler(self, update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query

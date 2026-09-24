@@ -78,7 +78,7 @@ def ani_query(page_start=1, page_end=None, type="ANIME", format="TV", ANI_URL = 
             return
 
         page += 1
-        time.sleep(1)
+        time.sleep(0.5)
 
 #la funzione deve essere chiamata con una lista di id, se è solo uno allora [id]
 def cerca_anisongdb(mal_ids, filters = None, url = THEME_URL):
@@ -146,12 +146,14 @@ def popolate(page_start, page_end, path, sleep=None):
                     diff = tema["songDifficulty"]
                     type = tema["songType"]
                     song = tema["songName"]
+                    songID = tema["annSongId"]
                     video_id = tema.get("HQ") or tema.get("MQ")
                     audio_id = tema.get("audio")
 
 
                     song_info = {
                     "song": song,
+                    "song_id": songID,
                     "difficulty": diff,
                     "video": video_id,
                     "audio": audio_id
@@ -176,6 +178,7 @@ def popolate(page_start, page_end, path, sleep=None):
                 }
                 add_entry(new, path)
     deduplicate_db(path)
+    no_video_cleaner(path)
 
 def deduplicate_db(percorso):
     seen = {}
@@ -191,6 +194,35 @@ def deduplicate_db(percorso):
     with open(percorso, "w", encoding="utf-8") as f:
         for obj in seen.values():
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+def no_video_cleaner(path):
+    null_list = []
+    items = []
+
+    with open(path, "r", encoding="utf-8") as db:
+        for row in db:
+            row = row.strip()
+            if row:
+                item = json.loads(row)
+                entry = item["entry"]
+
+                for sezione in ("Openings", "Endings"):
+                    chiavi_da_rimuovere = [
+                        key for key, tema in entry[sezione].items()
+                        if not tema["video"]
+                    ]
+                    for key in chiavi_da_rimuovere:
+                        null_list.append(entry[sezione][key]["song"])
+                        entry[sezione].pop(key)
+
+                if entry["Openings"] or entry["Endings"]:
+                    items.append(item)
+
+    with open(path, "w", encoding="utf-8") as f:
+        for obj in items:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
 
 def get_samplepath(dest_path):
     sample_path = Path(dest_path[:-4] + "_sample" + dest_path[-4:])
@@ -312,8 +344,8 @@ class Downloader:
                         new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
 
                         sample_path = get_samplepath(new_path)
-                        if not sample_path.exists():
 
+                        if not sample_path.exists() and type != "null":
                             self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[type]}", new_path)
                             
                         media_list.append(new_path)
@@ -384,15 +416,7 @@ class Downloader:
 
 
 if __name__== '__main__':
-    db_obj = DB("db.jsonl")
-    db = db_obj.get_db()
 
-    dl = Downloader()
-
-    choices = db.random_pick(db,[60,100], 5)
-    sorted, paths, persistant = dl.download_media_list(db,choices)
-    for song in extract_sample_list(paths):
-        print(song)
-
+    popolate(41,50,"db.jsonl",0.5)
 
 

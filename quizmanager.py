@@ -175,7 +175,7 @@ class QuizManager:
     async def set_quiz_msg(self, chat_id, msg_id):
         lock = self.get_lock(chat_id)
         async with lock:
-            if self.active_chats[chat_id]["quiz_msg_id"] is None:
+            if self.active_chats[chat_id]:
                 self.active_chats[chat_id]["quiz_msg_id"] = msg_id
                 return True
             return False
