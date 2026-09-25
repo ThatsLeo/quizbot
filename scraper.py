@@ -228,6 +228,15 @@ def get_samplepath(dest_path):
     sample_path = Path(dest_path[:-4] + "_sample" + dest_path[-4:])
     return  sample_path
 
+def clean_path(path : Path):
+    # pulizia del nome file per evitare problemi su windows:
+    win_blacklist = '<>:"/\\|?*~'
+    blacklist_table = str.maketrans('', '', win_blacklist)
+    nome_pulito = path.name.translate(blacklist_table)
+    path = path.with_name(nome_pulito)
+    return path
+    
+
 class DB:
     def __init__(self, path):
         self.db = self.load_db(path)
@@ -351,7 +360,8 @@ class Downloader:
                         media_list.append(new_path)
 
                     paths.append(tuple(media_list)) 
-                    choices_list[index]['media_generic_path'] = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"
+                    media_path = clean_path(Path(f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"))
+                    choices_list[index]['media_generic_path'] = media_path
         print(choices_list)
         return choices_list, paths, disc_persistant
 
@@ -394,10 +404,7 @@ class Downloader:
     def _esegui_download(self, url, output_file):
 
         # pulizia del nome file per evitare problemi su windows:
-        win_blacklist = '<>:"/\\|?*~'
-        blacklist_table = str.maketrans('', '', win_blacklist)
-        nome_pulito = output_file.name.translate(blacklist_table)
-        output_file = output_file.with_name(nome_pulito)
+        output_file = clean_path(output_file)
 
         output_file.parent.mkdir(exist_ok=True, parents=True)
         percorso_temp = output_file.with_suffix(output_file.suffix + ".part")
