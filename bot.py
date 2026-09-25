@@ -1,6 +1,7 @@
 import logging
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaVideo, InputMediaAudio
-from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler, InlineQueryHandler, ChosenInlineResultHandler,  CallbackQueryHandler
+from telegram import Update, InlineQueryResultArticle, InputTextMessageContent, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters, CommandHandler, InlineQueryHandler, CallbackQueryHandler
+from telegram.error import BadRequest
 from scraper import Downloader, DB
 from canvas import extract_sample_list
 from queue import Queue
@@ -10,6 +11,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 class BOT:
@@ -29,7 +31,10 @@ class BOT:
             self.song_img = song_img.read()
 
         #INLINE FUNCTIONS#
-    #SOLO inline_search DEVE ESSERE CHIAMATA#
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
+
     def register_new_search(self, user_id):
         new_event = threading.Event()
 
@@ -196,7 +201,7 @@ class BOT:
         try: 
             #inizia il download restituendo la coda, la coda viene immediatamente scritta nello stato della sessione
             stop_event = await self.quiz_manager.get_stop_event(chat_id)
-            queue = self.start_quiz_pipeline(diff=[50,100], n_songs=4, stop_event=stop_event, only_OP=True)
+            queue = self.start_quiz_pipeline(diff=[70,100], n_songs=4, stop_event=stop_event, only_OP=True)
             await self.quiz_manager.set_sample_queue(chat_id, queue)
             isSong = await self.quiz_manager.next_song(chat_id)
 
@@ -212,6 +217,77 @@ class BOT:
             await context.bot.send_message(chat_id, "Errore nel caricamento.")
             await self.quiz_manager.remove_chat(chat_id)
 
+    async def start_timer(self, chat_id, context: ContextTypes.DEFAULT_TYPE, next_action : str):
+        assert next_action in ['post_video', 'to_next_song']
+        quiz_msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+
+        # check aggiuntivo per evitare qualsiasi problema di concorrenza:
+        current_jobs = context.job_queue.get_jobs_by_name(f"timer_{chat_id}")
+        for job in current_jobs: job.schedule_removal()
+        
+        job_data = {
+            "current": 15, # da dove starta il timer
+            "step": 3, # ogni quanti secondi si aggiorna (current deve essere un multiplo)
+            "message_id": quiz_msg_id,
+            "chat_id": chat_id,
+            "next_action" : next_action
+        }
+
+        context.job_queue.run_repeating(
+            callback=self.timer_callback,
+            interval=job_data['step'],
+            first=4, #secondi per iniziare il timer (tempo che invia circa e poco più)
+            data=job_data,
+            name=f"timer_{chat_id}",
+            chat_id=chat_id,
+            
+                )
+
+    async def timer_callback(self, context: ContextTypes.DEFAULT_TYPE):
+        job = context.job
+        data = job.data
+
+        data["current"] -= data["step"]
+
+        try:
+            if data["current"] > 0:
+                if data["next_action"] == "post_video": # aggiorna il timer solo se c'è una canzone in corso
+                    await context.bot.edit_message_caption(
+                        chat_id=data["chat_id"],
+                        message_id=data["message_id"],
+                        caption=data["current"])
+            else:
+                job.schedule_removal()
+                if data["next_action"] == "post_video":
+                    await self.post_video(data["chat_id"], context)
+                else:
+                    await self.to_next_song(data["chat_id"], context)
+
+        except BadRequest as e:
+            logging.warning(f'errore con il timer: {e}')
+            job.schedule_removal()
+            
+    async def post_video(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
+
+        msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
+        if msg_id is not None:
+            await context.bot.delete_message(chat_id, msg_id)
+
+        song = await self.quiz_manager.get_current_song(chat_id)
+        await self.quiz_manager.set_current_song_to_none(chat_id) # non accetta risposte durante il video
+
+        with open(f"{song['media_generic_path']}_sample.mp4", 'rb') as f:
+
+            msg = await context.bot.send_video(
+                chat_id, 
+                f,
+                caption = f"{song['anime_name']} - {song['type'][0]}",
+                write_timeout=60, 
+                read_timeout=60)
+                
+            await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
+            await self.start_timer(chat_id, context, next_action='to_next_song')
+        
     #Prende la canzone in struttura e la posta in chat.
     async def post_song(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
 
@@ -221,9 +297,6 @@ class BOT:
 
         song = await self.quiz_manager.get_current_song(chat_id)
 
-        keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton( " ▶️ ", callback_data="next_one")]
-                ])
         with open(f"{song['media_generic_path']}_sample.mp3", 'rb') as f:
 
             msg = await context.bot.send_audio(
@@ -233,18 +306,13 @@ class BOT:
                 performer='@AnimeChatz',
                 thumbnail=self.song_img,
                 write_timeout=60, 
-                read_timeout=60, 
-                reply_markup=keyboard)
+                read_timeout=60,
+                caption='15')
                 
             await self.quiz_manager.set_quiz_msg(chat_id, msg.message_id)
+            await self.start_timer(chat_id, context, next_action='post_video')
 
-
-    async def next_one_handler(self, update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        chat_id = update.effective_chat.id
-
-        await query.answer()
-
+    async def to_next_song(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
         if not await self.quiz_manager.try_advance(chat_id):
             return
 
@@ -253,15 +321,17 @@ class BOT:
             if isSong:
                 await self.post_song(chat_id, context)
             else:
-                msg_id = await self.quiz_manager.get_quiz_msg(chat_id)
-        
-                await context.bot.delete_message(chat_id, msg_id)
                 await context.bot.send_message(chat_id, "Quiz terminato!")
+                await self.post_leaderboard(chat_id, context)
                 await self.quiz_manager.remove_chat(chat_id)
         finally:
             await self.quiz_manager.done_advancing(chat_id)
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # rimozione timer:
+        current_jobs = context.job_queue.get_jobs_by_name(f"timer_{chat_id}")
+        for job in current_jobs: job.schedule_removal()
+
         if update.callback_query:
             await update.callback_query.answer()
             await update.callback_query.delete_message()
@@ -282,18 +352,15 @@ class BOT:
             await context.bot.delete_message(chat_id, msg_id)
         await self.quiz_manager.remove_chat(chat_id)
 
-    async def catch_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chosen_id = update.chosen_inline_result.result_id[7:] # leva la parte "answer_"
-        user = update.chosen_inline_result.from_user
-        chat_id = self.quiz_manager.get_user_chat(user)
+    async def post_leaderboard(self, chat_id, context: ContextTypes.DEFAULT_TYPE):
+        leaderboard = await self.quiz_manager.get_leaderboard(chat_id)
+        txt = ''
+        place = 1
+        for member, points in leaderboard:
+            txt+=f"{place}: {member} - {points} punti\n"
+            place+=1
 
-        current_song = await self.quiz_manager.get_current_song(chat_id)
-        right_answer = check_answer(chosen_id, current_song)
-
-        await context.bot.send_message(chat_id=chat_id, text="Risposta sbagliata")
-
-        if right_answer:
-            pass # aggiunge i punti alla leaderboard
+        await context.bot.send_message(chat_id, txt)
 
     async def react_to_inline_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = update.effective_message
@@ -304,28 +371,24 @@ class BOT:
         if message.via_bot and message.via_bot.id == context.bot.id: #risponde solo a messaggi inline inviati con questo bot
             try:
                 if "Risposta corretta" in message.text:
-                    await message.set_reaction(reaction="🎉") 
+                    await message.set_reaction(reaction="🎉")
+                    await self.quiz_manager.add_point(message.from_user, update.effective_chat.id)
                 elif "non era giusto" in message.text:
                     await message.set_reaction(reaction="🤡")
             except Exception as e:
                 print(f"reaction error: {e}")
 
-    
 bot = BOT(db=DB("db.jsonl"), downloader= Downloader(), qmanager= QuizManager())
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Ciao caro, digita /quiz per iniziare")
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token('8423678261:AAGnHWrMf0I3FAYouWPb9P3iDx88uH8tEzE').write_timeout(30).concurrent_updates(True).build()
     
-    start_handler = CommandHandler('start', start)
+    start_handler = CommandHandler('start', bot.start)
     application.add_handler(start_handler)
 
     inline_search_handler = InlineQueryHandler(bot.inline_search)
     application.add_handler(inline_search_handler)
 
-    application.add_handler(ChosenInlineResultHandler(bot.catch_answer, pattern="^" + 'join_quiz'))
     application.add_handler(MessageHandler(filters.VIA_BOT, bot.react_to_inline_answer))
 
     quiz_handler = CommandHandler("quiz", bot.quiz)
@@ -336,8 +399,7 @@ if __name__ == '__main__':
 
     callback_handlers= [CallbackQueryHandler(bot.join_quiz, pattern="^" + 'join_quiz' + "$"),
                         CallbackQueryHandler(bot.start_quiz, pattern="^" + 'start_quiz' + "$"),
-                        CallbackQueryHandler(bot.end_quiz, pattern="^" + 'end_quiz' + "$"),
-                        CallbackQueryHandler(bot.next_one_handler, pattern="^" + "next_one" + "$")]
+                        CallbackQueryHandler(bot.end_quiz, pattern="^" + 'end_quiz' + "$")]
 
     for handler in callback_handlers: application.add_handler(handler)
     

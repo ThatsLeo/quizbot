@@ -5,15 +5,29 @@ class Leaderboard:
         self._leaderboard = dict()
     def add(self, user):
         if user.id not in self._leaderboard:
-            self._leaderboard[user.id] = {'user_obj': user, 'turn': False, 'overall': 0} # turn se il giocatore ha trovato la risposta nel turno, overall punti totali
+            self._leaderboard[user.id] = {'right_turn_answer': False, 'overall': 0, 'user_obj': user} # right_turn_answer se il giocatore ha trovato la risposta nel turno, overall punti totali
     def discard(self, user):
         self._leaderboard.pop(user.id, None)
     def get_members(self):
         return list(self._leaderboard.keys())
-    def get_turn(self, user):
-        return self._leaderboard[user.id]['turn']
+    def get_right_turn_answer(self, user):
+        return self._leaderboard[user.id]['right_turn_answer']
     def get_overall(self, user):
         return self._leaderboard[user.id]['overall']
+    def add_point(self, user):
+        if not self.get_right_turn_answer(user): #aggiunge solo la prima volta per turno
+            self._leaderboard[user.id]['right_turn_answer'] = True
+            self._leaderboard[user.id]['overall'] += 1
+    def reset_turn(self):
+        for m in self._leaderboard:
+            self._leaderboard[m]['right_turn_answer'] = False
+    def get_leaderboard(self): # -> lista di tuple (user_tag, overall) ordinata
+        sorted_leaderboard = sorted( #ordina per overall
+            self._leaderboard.items(), 
+            key=lambda item: item[1]['overall'], 
+            reverse=True)
+        return [(_get_user_tag(data['user_obj']), data['overall'])for user_id, data in sorted_leaderboard] 
+            
     def __contains__(self, user): # abilita: if i in members 
         return user.id in self._leaderboard
     def __iter__(self): # abilita: for i in members 
@@ -106,7 +120,6 @@ class QuizManager:
             if self.active_chats[chat_id]["quiz"] == "started":
                 return "started"
 
-            #if not any(member.id == user.id for member in self.active_chats[chat_id]['members']):
             if not self.get_user_chat(user):
                 self.active_chats[chat_id]['members'].add(user)
                 return True
@@ -141,6 +154,11 @@ class QuizManager:
         lock = self.get_lock(chat_id)
         async with lock:
             self.active_chats[chat_id]['current_song'] = song
+
+    async def set_current_song_to_none(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['current_song'] = None
 
     async def get_current_song(self, chat_id):
         lock = self.get_lock(chat_id)
@@ -194,6 +212,22 @@ class QuizManager:
         queue = await self.get_sample_queue(chat_id)
         song = await self.get_next_sample(queue)
         if song:
+            await self.reset_turn(chat_id)
             await self.set_current_song(chat_id, song)
             return True
         return False
+
+    async def add_point(self, user, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['members'].add_point(user)
+
+    async def reset_turn(self, chat_id):
+            lock = self.get_lock(chat_id)
+            async with lock:
+                self.active_chats[chat_id]['members'].reset_turn()
+
+    async def get_leaderboard(self, chat_id):
+            lock = self.get_lock(chat_id)
+            async with lock:
+                return self.active_chats[chat_id]['members'].get_leaderboard()

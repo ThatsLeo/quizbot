@@ -394,7 +394,7 @@ class Downloader:
     def _esegui_download(self, url, output_file):
 
         # pulizia del nome file per evitare problemi su windows:
-        win_blacklist = '<>:"/\\|?*'
+        win_blacklist = '<>:"/\\|?*~'
         blacklist_table = str.maketrans('', '', win_blacklist)
         nome_pulito = output_file.name.translate(blacklist_table)
         output_file = output_file.with_name(nome_pulito)
