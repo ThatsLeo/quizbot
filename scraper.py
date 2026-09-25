@@ -21,7 +21,6 @@ DOWNLOAD_URL = "https://naedist.animemusicquiz.com"
 #Yield function da usare in un loop, es: for data in ani_query(...):
 def ani_query(page_start=1, page_end=None, type="ANIME", format="TV", ANI_URL = ANI_URL):
 
-    
     query = """
         query($page:Int = 1, $type:MediaType, $format:[MediaFormat], 
         $sort:[MediaSort]=[POPULARITY_DESC,SCORE_DESC] ) { 
@@ -146,14 +145,14 @@ def popolate(page_start, page_end, path, sleep=None):
                     diff = tema["songDifficulty"]
                     type = tema["songType"]
                     song = tema["songName"]
-                    songID = tema["annSongId"]
+                    songArtist = tema["songArtist"]
                     video_id = tema.get("HQ") or tema.get("MQ")
                     audio_id = tema.get("audio")
 
 
                     song_info = {
                     "song": song,
-                    "song_id": songID,
+                    "song_artist": songArtist,
                     "difficulty": diff,
                     "video": video_id,
                     "audio": audio_id
@@ -295,7 +294,7 @@ class DB:
     # difficoltà corrisponde a quella nel db
     def random_pick(self, diff_range, n_extractions, only_OP=True):
         all_choices = dict()
-        pool_piatto = []  # lista di (indice_entry, song_type)
+        pool_piatto = []  # lista di (indice_entry, song_type, song_id)
 
         for i, complete_entry in enumerate(self.db):
             entry = complete_entry['entry']
@@ -305,20 +304,28 @@ class DB:
                 SONGS = SONGS | entry["Endings"]
             for song_type, opening in SONGS.items():
                 diff = opening["difficulty"]
+                song_name = opening["song"]
+                song_artist = opening["song_artist"]
                 if diff and diff_range[0] <= diff <= diff_range[1]:
-                    pool_piatto.append((i, song_type))
+                    pool_piatto.append((i, song_type, song_name, song_artist))
                     if i not in all_choices:
                         all_choices[i] = {'type': [], 'anime_name': entry['nameEN'], 'anime_id': entry['mal_id']}
 
-        n_estratti = min(n_extractions, len(pool_piatto))
-        scelte_piatte = random.sample(pool_piatto, k=n_estratti)
+        random.shuffle(pool_piatto)
 
+        song_artist_seen = set()
+             
         choices = {}
-        for i, song_type in scelte_piatte:
+        for i, song_type, song_name, song_artist in pool_piatto:
+            if (song_artist,song_name) in song_artist_seen:
+                continue
+            song_artist_seen.add((song_artist,song_name))
             if i not in choices:
                 choices[i] = {'type': [], 'anime_name': all_choices[i]['anime_name'], 'anime_id': all_choices[i]['anime_id']}
             choices[i]['type'].append(song_type)
 
+            if len(song_artist_seen) >= n_extractions:
+                break
         return choices
 
     def get_db(self):
@@ -424,6 +431,6 @@ class Downloader:
 
 if __name__== '__main__':
 
-    popolate(41,50,"db.jsonl",0.5)
+    popolate(11,20,"db.jsonl",0.5)
 
 
