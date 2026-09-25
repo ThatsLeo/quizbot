@@ -328,6 +328,7 @@ class BOT:
             await self.quiz_manager.done_advancing(chat_id)
 
     async def end_quiz(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        chat_id = update.effective_chat.id
         # rimozione timer:
         current_jobs = context.job_queue.get_jobs_by_name(f"timer_{chat_id}")
         for job in current_jobs: job.schedule_removal()
@@ -337,8 +338,6 @@ class BOT:
             await update.callback_query.delete_message()
         elif update.message:
             await update.message.reply_text("Quiz Annullato!")
-
-        chat_id = update.effective_chat.id
 
         try: 
             stop_event = await self.quiz_manager.get_stop_event(chat_id)
