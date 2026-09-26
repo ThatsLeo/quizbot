@@ -1,4 +1,5 @@
 import asyncio, threading
+from scraper import difficulties
 
 class Leaderboard:
     def __init__(self):
@@ -72,13 +73,71 @@ class QuizManager:
                     'quiz_msg_id': None,
                     'stop_event' : threading.Event(),
                     'config': {
-                        'diff_range': [0, 100],
-                        'n_songs': None,
-                        'only_OP': True
+                        'has_power' : None,
+                        'diff': 'Facile',
+                        'n_songs': 5,
+                        'only_OP': True,
+                        'delete_audios' : True,
+                        'delete_videos' : True
                     },
                 }
                 return True
             return False
+        
+    async def config_set_has_power(self, chat_id, users_id: list):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            self.active_chats[chat_id]['config']['has_power'] = users_id
+
+    async def config_get_has_power(self, chat_id):
+            lock = self.get_lock(chat_id)
+            async with lock:
+                return self.active_chats[chat_id]['config']['has_power']
+
+    async def update_config_setting(self, chat_id, setting):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            if setting == 'change_diff':
+                diffs = list(difficulties.keys())
+                current = diffs.index(self.active_chats[chat_id]['config']['diff'])
+                next_diff = diffs[(current + 1) % len(diffs)]
+                self.active_chats[chat_id]['config']['diff'] = next_diff
+            elif setting == "n_songs_down":
+                current = self.active_chats[chat_id]['config']['n_songs']
+                if current == 1: # minimo 1
+                    return False
+                self.active_chats[chat_id]['config']['n_songs'] -= 1
+            elif setting == "n_songs_up":
+                current = self.active_chats[chat_id]['config']['n_songs']
+                if current == 20: # massimo 20
+                    return False
+                self.active_chats[chat_id]['config']['n_songs'] += 1
+            elif setting == "toggle_endings":
+                current = self.active_chats[chat_id]['config']['only_OP']
+                self.active_chats[chat_id]['config']['only_OP'] ^= True # fa lo xor, quindi inverte True e False
+            elif setting == "toggle_delete_audio":
+                current = self.active_chats[chat_id]['config']['delete_audios']
+                self.active_chats[chat_id]['config']['delete_audios'] ^= True
+            elif setting == "toggle_delete_video":
+                current = self.active_chats[chat_id]['config']['delete_videos']
+                self.active_chats[chat_id]['config']['delete_videos'] ^= True
+        return True
+                
+            
+    async def get_config(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]['config']
+
+    async def get_delete_audios(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]['config']['delete_audios']
+
+    async def get_delete_videos(self, chat_id):
+        lock = self.get_lock(chat_id)
+        async with lock:
+            return self.active_chats[chat_id]['config']['delete_videos']
 
     async def try_advance(self, chat_id):
         lock = self.get_lock(chat_id)

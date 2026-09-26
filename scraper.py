@@ -4,7 +4,6 @@ import time
 import json
 import random
 from pathlib import Path
-from canvas import extract_sample_list
 import threading
 
 
@@ -13,6 +12,11 @@ ANI_URL = "https://graphql.anilist.co"
 THEME_URL = "https://anisongdb.com/api/mal_ids_request"
 DOWNLOAD_URL = "https://naedist.animemusicquiz.com"
 
+difficulties = {'Facile' : [70,100],
+              'Medio' : [40,70],
+              'Difficile' : [10,30],
+              'Impossibile' : [0,10],
+              'Fritto misto' : [0,100]}
 
 #json query verso anilist
 #ritorna un {False: errore} in caso di errore
@@ -292,7 +296,10 @@ class DB:
 
 
     # difficoltà corrisponde a quella nel db
-    def random_pick(self, diff_range, n_extractions, only_OP=True):
+    def random_pick(self, diff, n_extractions, only_OP=True):
+        assert diff in difficulties
+        diff_range = difficulties[diff]
+
         all_choices = dict()
         pool_piatto = []  # lista di (indice_entry, song_type, song_id)
 
@@ -356,8 +363,9 @@ class Downloader:
 
                     #video/audio download sincrono        
                     media_list = []
+                    media_path = clean_path(Path(f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"))
                     for format, type in (("mp3", "audio"), ("mp4", "video")):
-                        new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
+                        new_path = f"{media_path}.{format}"
 
                         sample_path = get_samplepath(new_path)
 
@@ -367,7 +375,6 @@ class Downloader:
                         media_list.append(new_path)
 
                     paths.append(tuple(media_list)) 
-                    media_path = clean_path(Path(f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"))
                     choices_list[index]['media_generic_path'] = media_path
         print(choices_list)
         return choices_list, paths, disc_persistant

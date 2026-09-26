@@ -1,3 +1,5 @@
 downloads/
 tester.py
 __pycache__/
+.vscode
+test.py
