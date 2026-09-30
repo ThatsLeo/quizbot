@@ -88,13 +88,14 @@ class BOT:
             
             for entry in found:
                 right_answer = check_answer(entry['mal_id'], current_song)
-                txt = "Risposta corretta!" if right_answer else f"\"{entry['nameEN']}\" non era giusto!"
-    
+                title = entry["nameEN"] or entry["nameJP"] or "Sconosciuto"
+                txt = "Risposta corretta!" if right_answer else f"\"{title}\" non era giusto!"
+
                 txt_html = f'<a href="tg://track?id={entry["mal_id"]}">&#8203;</a>{txt}' #mette l'ipertesto in "&#8203" che è un carattere non esistente
                 results.append(
                     InlineQueryResultArticle(
                         id=f'answer_{entry["mal_id"]}',
-                        title=entry["nameEN"],
+                        title=title,
                         description=entry["nameJP"],
                         thumbnail_url=entry["coverImg"]["large"],
                         input_message_content=InputTextMessageContent(
@@ -118,20 +119,24 @@ class BOT:
                                     is_personal=True)
 
     #FUNZIONE HELPER DA NON USARE
-    def _zero2sample(self, config, disc_persistant, queue : Queue, stop_event:threading.Event): 
+    def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue, stop_event):
         try:
-            choices = self.db_obj.random_pick(diff=config['diff'], n_extractions=config['n_songs'], only_OP=config['only_OP'])
-            choices_info, paths, persistant = self.downloader.download_media_list(self.db_obj.get_db(),choices, disc_persistant)
+            choices = self.db_obj.random_pick(diff, n_songs, only_OP=only_OP)
+            paths, persistant = self.downloader.download_media_list(
+                self.db_obj.get_db(), choices, disc_persistant
+            )
 
-            for song_info in extract_sample_list(paths, choices_info, persistant):
+            for song_info in extract_sample_list(paths, persistant):
                 if stop_event.is_set():
                     return
                 queue.put(song_info)
         except Exception as e:
-            queue.put(e)
+            if not stop_event.is_set():
+                queue.put(e)
         finally:
-            queue.put(None)
-
+            if not stop_event.is_set():
+                queue.put(None)
+                
     #FUNZIONE DI INIZIALIZZAZIONE PIPELINE CHE RITORNA LA CODA DA CUI ESTRARRE I DATI
     def start_quiz_pipeline(self, config, stop_event: threading.Event, disc_persistant=False):
         queue = Queue(maxsize=2)

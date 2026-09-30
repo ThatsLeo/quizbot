@@ -411,36 +411,39 @@ class Downloader:
         self.dest_path = 'downloads'
 
     #La funzione ora si aspetta una copia completa in RAM del DB.
-    def download_media_list(self, db_load, choices_list:dict, disc_persistant = False):
-
-        choices_list = {key:choices_list[key] for key in sorted(choices_list.keys())} # Sort per index
-        paths = []
+    def download_media_list(self, db_load, choices_list: dict, disc_persistant=False):
+        choices_list = {key: choices_list[key] for key in sorted(choices_list.keys())}
+        paths = []  # ora: lista di dict, uno per SINGOLA canzone
 
         for index, complete_entry in enumerate(db_load):
             if index in choices_list:
                 entry = complete_entry["entry"]
-                for target in choices_list[index]['type']:
-                    
-                    if "Opening" in target: SONG = entry["Openings"][target]
-                    elif "Ending" in target: SONG = entry["Endings"][target]
+                info = choices_list[index]
 
-                    #Video/audio download sincrono        
+                for target in info['type']:
+                    if "Opening" in target:
+                        SONG = entry["Openings"][target]
+                    elif "Ending" in target:
+                        SONG = entry["Endings"][target]
+
                     media_list = []
-                    media_path = clean_path(Path(f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}"))
-                    for format, type in (("mp3", "audio"), ("mp4", "video")):
-                        new_path = f"{media_path}.{format}"
-
+                    for format, type_ in (("mp3", "audio"), ("mp4", "video")):
+                        new_path = f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}.{format}"
                         sample_path = get_samplepath(new_path)
-
-                        if not sample_path.exists() and type != "null":
-                            self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[type]}", new_path)
-                            
+                        if not sample_path.exists() and type_ != "null":
+                            self.download_file_sync(f"{self.DOWNLOAD_URL}/{SONG[type_]}", new_path)
                         media_list.append(new_path)
 
-                    paths.append(tuple(media_list)) 
-                    choices_list[index]['media_generic_path'] = media_path
-        return choices_list, paths, disc_persistant
+                    paths.append({
+                        'media': tuple(media_list),
+                        'anime_name': info['anime_name'],
+                        'anime_id': info['anime_id'],
+                        'type': target,
+                        'valid_ids': info.get('valid_ids', [info['anime_id']]),
+                        'media_generic_path': f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}",
+                    })
 
+        return paths, disc_persistant
 
     #Il parametro forced forza la riscrittura del file nonostante sia già presente.
     def download_file_sync(self, url, dest_path, forced=False):

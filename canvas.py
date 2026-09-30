@@ -227,30 +227,32 @@ def is_sample(path):
     return "sample" in path
 
 
-def extract_sample_list(path_list: list[tuple], choice_list, disc_persistant, duration=15):
+def extract_sample_list(path_list, disc_persistant, duration=15):
     from scraper import get_samplepath
-    keys = list(choice_list.keys())
-    for i, (mp3, mp4) in enumerate(path_list):
-        out = []
+
+    for item in path_list:
+        mp3, mp4 = item['media']
         best_start_sec = None
+        out = []
 
         if mp3 is None:
             mp3 = mp4[:-1] + "3"
             extract_audio_from_video(mp4, mp3)
 
         for format in (mp3, mp4):
-
             output_path = get_samplepath(format)
-
             if not output_path.exists():
                 if best_start_sec is None:
                     best_start_sec = sampling_pipeline(mp3)
                 cut(format, best_start_sec, output_path, duration=duration)
-
             out.append(str(output_path))
 
         if not disc_persistant:
             Path(mp3).unlink(missing_ok=True)
             Path(mp4).unlink(missing_ok=True)
 
-        yield choice_list[keys[i]]
+        song_info = dict(item)
+        song_info['sample_mp3'] = out[0]
+        song_info['sample_mp4'] = out[1]
+
+        yield song_info
