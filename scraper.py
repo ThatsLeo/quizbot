@@ -492,9 +492,9 @@ class Downloader:
             percorso_temp.unlink(missing_ok=True)
             return False
 
-
+#Continuare da pagina 66(compresa) in poi
 if __name__== '__main__':
 
-    popolate(11,20,"db.jsonl",0.5)
+    popolate(66,70,"db.jsonl",0.3)
 
 
