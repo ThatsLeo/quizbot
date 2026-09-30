@@ -5,6 +5,7 @@ import json
 import random
 from pathlib import Path
 import threading
+import pickle
 
 
 ANI_URL = "https://graphql.anilist.co"
@@ -176,6 +177,31 @@ def popolate(page_start, page_end, path, sleep=None):
                 add_entry(new, path)
     deduplicate_db(path)
     no_video_cleaner(path)
+    write_helper(path)
+
+def write_helper(path):
+    song_set = dict()
+
+    with open(path, "r", encoding="utf-8") as f:
+        for row in f:
+            row = row.strip()
+            if row:
+                complete = json.loads(row)
+                entry = complete["entry"]
+
+                OP = entry["Openings"]
+                ED = entry["Endings"]
+                for type in (OP, ED):
+                    for key, op in type.items():
+                        to_find = (op["song"], op["song_artist"])
+                        if (to_find) not in song_set:
+                            song_set[to_find] = []
+                        song_set[to_find].append((entry["mal_id"], key))
+    path_h = path[:-6] + "_dup.bin"
+    with open(path_h, "wb") as file:
+        pickle.dump(song_set, file)
+
+
 
 def deduplicate_db(path):
     '''Rimuove i record duplicati dal DB'''
@@ -238,12 +264,37 @@ def clean_path(path : Path):
 class DB:
     def __init__(self, path):
         self.db = self.load_db(path)
+        self.dup = self.load_dup(path)
 
     
     def load_db(self, path):
         '''Carica il db e lo restituisce come file.'''
         with open(path, "r", encoding="utf-8") as f:
             return [json.loads(riga) for riga in f if riga.strip()]
+
+    def load_dup(self, path):
+        '''Carica l'oggetto python dal binario ausiliario.
+        
+        Struttura dell'oggetto:      
+        { (song_name,artist) : [(mal_id,type),] ..., ...}
+
+
+        Esempio di codice di accesso:\n
+        baba = db.get_dup()\n
+        for key, item in baba.items():\n
+            if len(baba[key]) > 1:\n
+                print(f"{key}-{item}")
+        
+        Questo snippet restituisce una cosa del tipo:\n
+        ('Kimi no Shiranai Monogatari', 'supercell')-[(17074, 'Ending 2'), (5081, 'Ending 1')]
+
+        '''
+        path_h = path[:-6] + "_dup.bin"
+        if not Path(path_h).exists():
+            write_helper(path)
+
+        with open(path_h, "rb") as file:
+            return pickle.load(file)
 
     def _is_in_(self, a:str, b:str):
         if not a or not b:
@@ -293,16 +344,11 @@ class DB:
         return res
 
 
-<<<<<<< HEAD
-    # difficoltà corrisponde a quella nel db
+    
     def random_pick(self, diff, n_extractions, only_OP=True):
         assert diff in difficulties
         diff_range = difficulties[diff]
-=======
-    
-    def random_pick(self, diff_range, n_extractions, only_OP = True):
->>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
-
+        
         all_choices = dict()
         pool_piatto = []  # lista di (indice_entry, song_type, song_id)
 
@@ -312,7 +358,7 @@ class DB:
             SONGS = entry["Openings"]
             if not only_OP: SONGS = SONGS | entry["Endings"] # Merge con le ending
             for song_type, opening in SONGS.items():
-<<<<<<< HEAD
+
                 diff = opening["difficulty"]
                 song_name = opening["song"]
                 song_artist = opening["song_artist"]
@@ -327,31 +373,33 @@ class DB:
              
         choices = {}
         for i, song_type, song_name, song_artist in pool_piatto:
-            if (song_artist,song_name) in song_artist_seen:
+            key = (song_artist,song_name)
+            if key in song_artist_seen:
                 continue
             song_artist_seen.add((song_artist,song_name))
+
             if i not in choices:
-                choices[i] = {'type': [], 'anime_name': all_choices[i]['anime_name'], 'anime_id': all_choices[i]['anime_id']}
+                group = self.dup.get(key, [])
+                valid_ids = [mal_id for mal_id, _ in group] or [all_choices[i]['anime_id']]
+
+                choices[i] = {
+                'type': [],
+                'anime_name': all_choices[i]['anime_name'],
+                'anime_id': all_choices[i]['anime_id'],
+                'valid_ids': valid_ids,
+            }            
             choices[i]['type'].append(song_type)
 
             if len(song_artist_seen) >= n_extractions:
                 break
-=======
 
-                diff = opening["difficulty"] # Difficoltà corrisponde a quella nel db
-
-                if diff and diff <= diff_range[1] and diff >= diff_range[0]:
-                    if i in all_choices: all_choices[i]['type'].append(song_type)
-                    else:
-                        all_choices[i] = {'type' : [song_type], 'anime_name': entry['nameEN'], 'anime_id' : entry['mal_id']}
-
-        if n_extractions > len(all_choices) : n_extractions = len(all_choices)
-        choices = dict(random.choices(list(all_choices.items()), k=n_extractions))
->>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
         return choices
 
     def get_db(self):
         return self.db
+
+    def get_dup(self):
+        return self.dup
 
 class Downloader:
 
@@ -391,7 +439,6 @@ class Downloader:
 
                     paths.append(tuple(media_list)) 
                     choices_list[index]['media_generic_path'] = media_path
-        print(choices_list)
         return choices_list, paths, disc_persistant
 
 
@@ -429,14 +476,7 @@ class Downloader:
         return risultato
 
     def _esegui_download(self, url, output_file):
-<<<<<<< HEAD
-
-        # pulizia del nome file per evitare problemi su windows:
-        output_file = clean_path(output_file)
-
-=======
         '''Funzione esecutiva del vero download, viene chiamata unicamente dopo tutti i controlli.'''
->>>>>>> 082e82d (Fixed some comments on functions and their docstring representation for scraper.py)
         output_file.parent.mkdir(exist_ok=True, parents=True)
         percorso_temp = output_file.with_suffix(output_file.suffix + ".part")
         try:

@@ -41,7 +41,7 @@ def _get_user_tag(user):
 
 def check_answer(answer_id, current_song):
     if current_song:
-        if int(answer_id) == current_song['anime_id']:
+        if int(answer_id) in current_song['valid_ids']:
             return True
     else:
         return False
