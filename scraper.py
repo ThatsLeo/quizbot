@@ -438,7 +438,7 @@ class Downloader:
                         'media': tuple(media_list),
                         'anime_name': info['anime_name'],
                         'anime_id': info['anime_id'],
-                        'type': target,
+                        'type': [target],
                         'valid_ids': info.get('valid_ids', [info['anime_id']]),
                         'media_generic_path': f"{self.dest_path}/{entry['mal_id']}/{SONG['song']}",
                     })

@@ -119,9 +119,11 @@ class BOT:
                                     is_personal=True)
 
     #FUNZIONE HELPER DA NON USARE
-    def _zero2sample(self, diff, n_songs, only_OP, disc_persistant, queue, stop_event):
+    def _zero2sample(self, config, disc_persistant, queue, stop_event):
         try:
-            choices = self.db_obj.random_pick(diff, n_songs, only_OP=only_OP)
+            choices = self.db_obj.random_pick(
+                config['diff'], config['n_songs'], only_OP=config['only_OP']
+            )
             paths, persistant = self.downloader.download_media_list(
                 self.db_obj.get_db(), choices, disc_persistant
             )
@@ -136,7 +138,7 @@ class BOT:
         finally:
             if not stop_event.is_set():
                 queue.put(None)
-                
+                            
     #FUNZIONE DI INIZIALIZZAZIONE PIPELINE CHE RITORNA LA CODA DA CUI ESTRARRE I DATI
     def start_quiz_pipeline(self, config, stop_event: threading.Event, disc_persistant=False):
         queue = Queue(maxsize=2)
