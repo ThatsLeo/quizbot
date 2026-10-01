@@ -157,7 +157,7 @@ class BOT:
         if not added:
             await context.bot.send_message(chat_id=chat_id, text="Quiz ancora in corso.\nDigita /end_quiz per annullarlo")
             return
-        chat_power_list = [admin.user.id for admin in await update.effective_chat.get_administrators()] if update.effective_chat.type == 'PRIVATE' else []
+        chat_power_list = [admin.user.id for admin in await update.effective_chat.get_administrators()] if update.effective_chat.type != 'PRIVATE' else []
         chat_power_list.append(update.effective_sender.id)
         await self.quiz_manager.config_set_has_power(chat_id, chat_power_list)
 
