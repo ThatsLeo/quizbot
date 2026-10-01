@@ -365,8 +365,10 @@ class DB:
                 if diff and diff_range[0] <= diff <= diff_range[1]:
                     pool_piatto.append((i, song_type, song_name, song_artist))
                     if i not in all_choices:
-                        all_choices[i] = {'type': [], 'anime_name': entry['nameEN'], 'anime_id': entry['mal_id']}
-
+                        all_choices[i] = {
+                            'anime_name': entry.get('nameEN') or entry.get('nameJP') or 'Sconosciuto',
+                            'anime_id': entry['mal_id']
+                        }
         random.shuffle(pool_piatto)
 
         song_artist_seen = set()
